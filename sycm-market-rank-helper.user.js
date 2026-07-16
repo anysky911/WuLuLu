@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         生市2.7.2
 // @namespace    https://github.com/anysky911/WuLuLu
-// @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/wululu.user.js
-// @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/wululu.user.js
+// @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
+// @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
 // @version      2.7.2
 // @description  切换原生类目后即时记录参数，加载中断后从下一未加载页续载并导出表格
 // @match        https://sycm.taobao.com/*
