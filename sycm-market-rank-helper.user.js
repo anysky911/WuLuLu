@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         生市2.7.2
+// @name         生市2.7.3
 // @namespace    https://github.com/anysky911/WuLuLu
 // @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
-// @version      2.7.2
-// @description  切换原生类目后即时记录参数，加载中断后从下一未加载页续载并导出表格
+// @version      2.7.3
+// @description  切换原生类目后即时记录参数，稳定加载并从下一未加载页续载导出表格
 // @match        https://sycm.taobao.com/*
 // @grant        none
 // @run-at       document-idle
@@ -312,7 +312,11 @@
       cateId: p.get('cateId'),
       cateFlag: p.get('cateFlag') || '2'
     };
-    const header = document.querySelector('.common-picker-header[title]');
+    const headers = Array.from(document.querySelectorAll('.common-picker-header[title], .item-cate a[title], [data-ebase="CommonPicker"] a[title]'));
+    const header = headers.find(item => {
+      const title = item.getAttribute('title') || '';
+      return title.split('>').map(part => part.trim()).filter(Boolean).length >= 2;
+    });
     const path = header ? header.getAttribute('title').split('>').map(item => item.trim()).filter(Boolean) : [];
 
     if (!upsertCategory(path, params)) return false;
@@ -343,9 +347,13 @@
     return true;
   }
 
-  function scheduleCategoryRecord(delay = 500) {
+  function scheduleCategoryRecord(delay = 500, force = false) {
+    if (categoryRecordTimer && !force) return;
     clearTimeout(categoryRecordTimer);
-    categoryRecordTimer = setTimeout(rememberCurrentCategory, delay);
+    categoryRecordTimer = setTimeout(() => {
+      categoryRecordTimer = 0;
+      rememberCurrentCategory();
+    }, delay);
   }
 
   function findCategoryByParams(parentCateId, cateId, cateFlag) {
@@ -744,13 +752,13 @@
     return false;
   }
 
-  async function waitForRows300(timeout = 360000) {
+  async function waitForRows300(timeout = 720000) {
     const start = Date.now();
     let lastProgress = -1;
     let lastProgressAt = start;
     let lastResumeAt = 0;
     let resumeCount = 0;
-    const maxResumeCount = 12;
+    const maxResumeCount = 30;
 
     while (Date.now() - start < timeout) {
       try {
@@ -772,11 +780,12 @@
         }
 
         const now = Date.now();
-        const stalled = now - lastProgressAt >= 8000;
+        const stalled = now - lastProgressAt >= 15000;
         const failure = getVisibleLoadFailure();
         const canResume = resumeCount < maxResumeCount && now - lastResumeAt >= 5000;
+        const activelyLoading = !!findButtonByText('停止加载');
 
-        if (canResume && (failure || stalled)) {
+        if (canResume && (failure || (stalled && !activelyLoading))) {
           const action = await tryResumeLoading(true, rows);
           if (action) {
             resumeCount += 1;
@@ -1183,7 +1192,7 @@
     const target = event.target;
     if (!(target instanceof Element)) return;
     if (target.closest('.common-picker-header, .common-picker-menu .tree-item')) {
-      scheduleCategoryRecord(700);
+      scheduleCategoryRecord(900, true);
     }
   }, true);
 
@@ -1191,13 +1200,13 @@
     const original = history[method];
     history[method] = function (...args) {
       const result = original.apply(this, args);
-      scheduleCategoryRecord();
+      scheduleCategoryRecord(700, true);
       return result;
     };
   });
 
-  window.addEventListener('popstate', () => scheduleCategoryRecord());
-  window.addEventListener('hashchange', () => scheduleCategoryRecord());
+  window.addEventListener('popstate', () => scheduleCategoryRecord(700, true));
+  window.addEventListener('hashchange', () => scheduleCategoryRecord(700, true));
 
   setTimeout(async () => {
     if (localStorage.getItem(AUTO_RUN_KEY) === '1') {
