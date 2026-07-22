@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.2.0
+// @version      1.2.1
 // @description  批量设置时间、价格、行业类目与榜单，串行调用页面的一键导出、加载全部和导出表格。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,6 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
+  const SCRIPT_VERSION = '1.2.1';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -143,8 +144,11 @@
     if (!target || isDisabled(target)) throw new Error(`${description}不可点击`);
     target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
     await sleep(160);
-    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-    target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    // Tampermonkey 的隔离环境中 window 不是页面原生 Window 对象；把它作为
+    // MouseEvent 的 view 传入会抛出“Failed to convert value to Window”。
+    // click() 本身已足够触发页面监听，这里只保留不带 view 的标准鼠标事件。
+    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
     target.click();
     await sleep(240);
   }
@@ -870,7 +874,7 @@
       <section class="panel">
         <header class="head">
           <strong>罗盘榜单批量导出</strong>
-          <small>v1.0</small>
+          <small>v${SCRIPT_VERSION}</small>
           <button class="icon-btn collapse" title="折叠/展开">−</button>
         </header>
         <div class="body">
