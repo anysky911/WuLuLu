@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.1.0
-// @description  先应用筛选设置，再批量导出商品榜单；串行调用一键导出、加载全部和导出表格。
+// @version      1.2.0
+// @description  批量设置时间、价格、行业类目与榜单，串行调用页面的一键导出、加载全部和导出表格。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -19,6 +19,9 @@
   const SCRIPT_NAME = '罗盘榜单批量导出';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
+  // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
+  // 因此即使表格没有显示全部行，也必须至少等待这一段时间后才能导出。
+  const MIN_LOAD_ALL_WAIT_MS = 30000;
   const RANK_TABS = ['搜索榜', '直播榜', '商品卡榜', '短视频榜'];
   const DEFAULT_CONFIG = {
     timeMode: 'seven',
@@ -48,12 +51,9 @@
     logBox: null,
     statusEl: null,
     progressEl: null,
-    applyButton: null,
     startButton: null,
     stopButton: null,
     form: null,
-    applying: false,
-    appliedSignature: '',
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -143,7 +143,8 @@
     if (!target || isDisabled(target)) throw new Error(`${description}不可点击`);
     target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
     await sleep(160);
-    // 篡改猴沙箱中的 window 不能作为 MouseEvent.view 传入页面上下文；直接使用原生 click 即可。
+    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
     target.click();
     await sleep(240);
   }
@@ -192,6 +193,17 @@
       quietSince = 0;
       return false;
     }, '榜单加载完成', timeoutMs, 300);
+  }
+
+  async function waitForRankControlsReady(timeoutMs = 30000) {
+    // 切榜后 React 会先保留上一榜的筛选区，再异步替换成新榜的数据。
+    // 只等 tab 变为 active 会让后续“应用设置”落到旧节点上。
+    await waitFor(() => {
+      const category = categoryControl();
+      return exportEntryButton() && category && priceBlock() ? true : null;
+    }, '新榜单筛选控件就绪', timeoutMs, 300);
+    await sleep(1200);
+    await waitForPageReady(timeoutMs);
   }
 
   function nativeSetValue(input, value) {
@@ -311,6 +323,7 @@
       }, `${tabName}切换完成`, 20000);
     }
     await waitForPageReady();
+    await waitForRankControlsReady();
   }
 
   async function applyQuickDate(timeMode) {
@@ -562,11 +575,21 @@
     const label = findExactText('加载全部', dialog);
     if (!label) throw new Error('导出弹窗中没有找到“加载全部”');
     const toggle = loadAllSwitch(dialog, label);
+    const initialRows = dialog.querySelectorAll('tbody tr').length;
+    const initialTotal = totalRowsInDialog(dialog);
     if (!switchIsOn(toggle)) {
       await safeClick(toggle || label, '加载全部开关');
-      await sleep(500);
+      await waitFor(() => switchIsOn(loadAllSwitch(dialog, label) || toggle), '加载全部开关已开启', 8000);
     }
-    return { label, toggle: loadAllSwitch(dialog, label) || toggle };
+    // 给页面事件循环一次机会，避免把刚点击开关后的初始界面当成完成状态。
+    await sleep(800);
+    return {
+      label,
+      toggle: loadAllSwitch(dialog, label) || toggle,
+      initialRows,
+      initialTotal,
+      startedAt: Date.now(),
+    };
   }
 
   function loadSignature(dialog, toggle, exportButton) {
@@ -577,18 +600,21 @@
     return [rows, busy, progress, switchIsOn(toggle), isDisabled(exportButton), text.length].join('|');
   }
 
-  async function waitForLoadAll(dialog, toggle, exportButton, config) {
+  async function waitForLoadAll(dialog, toggle, exportButton, config, loadState = {}) {
     const timeoutMs = config.loadTimeoutSec * 1000;
     const settleMs = Math.max(2500, config.settleSec * 1000);
     const startedAt = Date.now();
     let lastSignature = '';
     let stableSince = 0;
     let lastReportedRows = -1;
+    let sawActivity = false;
 
     return waitFor(() => {
       const total = totalRowsInDialog(dialog);
       const rows = dialog.querySelectorAll('tbody tr').length;
       const busy = visibleBusyCount(dialog);
+      const text = normalizeText(dialog.textContent);
+      const progress = text.match(/(?:加载|已获取|进度)[^%]{0,30}(?:\d+\s*%|\d+\s*\/\s*\d+)/)?.[0] || '';
       const signature = loadSignature(dialog, toggle, exportButton);
       if (signature !== lastSignature) {
         lastSignature = signature;
@@ -604,8 +630,15 @@
       const toggleReady = !toggle || switchIsOn(toggle);
       const buttonReady = !isDisabled(exportButton);
       const allRowsVisible = total > 0 && rows >= total;
-      // 有些版本会把全部数据缓存到扩展内部，表格仍只显示当前页；此时以页面持续稳定作为后备完成信号。
-      const stableFallback = elapsed >= Math.max(12000, settleMs * 2) && stableFor >= settleMs;
+      const dataChanged = rows !== loadState.initialRows || total !== loadState.initialTotal;
+      if (busy > 0 || dataChanged || progress) sawActivity = true;
+
+      // 有些版本会把全部数据缓存到扩展内部，表格仍只显示当前页。
+      // 不能因为“导出表格”按钮可点就立即导出：必须经历最短等待时间，且页面保持稳定。
+      const minimumWaitMs = Math.max(MIN_LOAD_ALL_WAIT_MS, settleMs * 4);
+      const stableFallback = elapsed >= minimumWaitMs
+        && stableFor >= Math.max(6000, settleMs)
+        && (sawActivity || elapsed >= minimumWaitMs + 10000);
       return toggleReady && buttonReady && busy === 0 && (allRowsVisible || stableFallback);
     }, '全部数据加载完成', timeoutMs, 500);
   }
@@ -651,8 +684,8 @@
     appendLog('点击页面“一键导出”');
     const { dialog, exportButton } = await openExportDialog(tabName);
     appendLog('弹窗已正常显示，开启“加载全部”');
-    const { toggle } = await enableLoadAll(dialog);
-    await waitForLoadAll(dialog, toggle, exportButton, config);
+    const loadState = await enableLoadAll(dialog);
+    await waitForLoadAll(dialog, loadState.toggle, exportButton, config, loadState);
 
     checkStopped();
     appendLog('全部数据已就绪，点击“导出表格”', 'success');
@@ -660,63 +693,6 @@
     await safeClick(exportButton, '导出表格按钮');
     await sleep(1800);
     await closeExportDialog(dialog);
-  }
-
-  function configSignature(config) {
-    return JSON.stringify({
-      timeMode: config.timeMode,
-      startDate: config.startDate,
-      endDate: config.endDate,
-      minPrice: config.minPrice,
-      maxPrice: config.maxPrice,
-      category1: config.category1,
-      category2: config.category2,
-      category3: config.category3,
-      tabs: config.tabs,
-    });
-  }
-
-  function activeRankTab() {
-    return RANK_TABS.find((tabName) => visibleElementsByExactText(tabName)
-      .map((element) => element.closest('[role="tab"]') || element)
-      .some((element) => isVisible(element) && (
-        element.getAttribute('aria-selected') === 'true' || /active/i.test(element.className || '')
-      ))) || null;
-  }
-
-  async function applySettings() {
-    if (runtime.running || runtime.applying) return;
-    const config = readFormConfig();
-    try {
-      validateConfig(config);
-    } catch (error) {
-      setStatus(error.message, 'error');
-      appendLog(error.message, 'error');
-      return;
-    }
-
-    runtime.applying = true;
-    runtime.applyButton.disabled = true;
-    try {
-      const tabName = config.tabs.includes(activeRankTab()) ? activeRankTab() : config.tabs[0];
-      setStatus(`正在应用设置到 ${tabName}`, 'running');
-      appendLog(`应用设置：${tabName}`);
-      await selectRankTab(tabName);
-      await applyDate(config);
-      await applyCategory(config);
-      await applyPrice(config);
-      saveConfig(config);
-      runtime.appliedSignature = configSignature(config);
-      setStatus(`设置已应用：${tabName} 已刷新`, 'success');
-      appendLog('设置已应用，请确认页面筛选条件后开始导出', 'success');
-    } catch (error) {
-      setStatus(`应用设置失败：${error.message}`, 'error');
-      appendLog(`应用设置失败：${error.message}`, 'error');
-      console.error(error);
-    } finally {
-      runtime.applying = false;
-      runtime.applyButton.disabled = false;
-    }
   }
 
   async function runBatch() {
@@ -727,13 +703,6 @@
     } catch (error) {
       setStatus(error.message, 'error');
       appendLog(error.message, 'error');
-      return;
-    }
-
-    if (runtime.appliedSignature !== configSignature(config)) {
-      const message = '请先点击“应用设置”，等待页面筛选条件刷新后再开始导出。';
-      setStatus(message, 'warn');
-      appendLog(message, 'warn');
       return;
     }
 
@@ -748,7 +717,6 @@
     saveConfig(config);
     runtime.running = true;
     runtime.stopRequested = false;
-    runtime.applyButton.disabled = true;
     runtime.startButton.disabled = true;
     runtime.stopButton.disabled = false;
     [...runtime.form.elements].forEach((control) => { if (control !== runtime.stopButton) control.disabled = true; });
@@ -780,7 +748,6 @@
     } finally {
       runtime.running = false;
       [...runtime.form.elements].forEach((control) => { control.disabled = false; });
-      runtime.applyButton.disabled = false;
       runtime.startButton.disabled = false;
       runtime.stopButton.disabled = true;
       updateCustomDateVisibility();
@@ -880,9 +847,8 @@
         .check input { width:15px; height:15px; accent-color:#315ff4; }
         details { margin-top:6px; color:#69758b; }
         summary { cursor:pointer; user-select:none; }
-        .actions { display:grid; grid-template-columns:1fr 1fr 70px; gap:8px; margin-top:10px; }
+        .actions { display:grid; grid-template-columns:1fr 88px; gap:8px; margin-top:10px; }
         button.action { height:36px; border:0; border-radius:8px; cursor:pointer; font:600 13px inherit; }
-        .apply { color:#2447a8; background:#e9efff; }
         .start { color:#fff; background:#315ff4; }
         .stop { color:#cf3e48; background:#fff0f1; }
         button:disabled { cursor:not-allowed; opacity:.48; }
@@ -904,7 +870,7 @@
       <section class="panel">
         <header class="head">
           <strong>罗盘榜单批量导出</strong>
-          <small>v1.1</small>
+          <small>v1.0</small>
           <button class="icon-btn collapse" title="折叠/展开">−</button>
         </header>
         <div class="body">
@@ -945,7 +911,6 @@
               </details>
             </div>
             <div class="actions">
-              <button class="action apply" type="button">应用设置</button>
               <button class="action start" type="button">开始一键导出</button>
               <button class="action stop" type="button" disabled>停止</button>
             </div>
@@ -961,20 +926,14 @@
     runtime.logBox = shadow.querySelector('.logs');
     runtime.statusEl = shadow.querySelector('.status');
     runtime.progressEl = shadow.querySelector('.progress');
-    runtime.applyButton = shadow.querySelector('.apply');
     runtime.startButton = shadow.querySelector('.start');
     runtime.stopButton = shadow.querySelector('.stop');
 
     populateForm(loadConfig());
     runtime.form.elements.timeMode.addEventListener('change', updateCustomDateVisibility);
     runtime.form.addEventListener('change', () => {
-      if (!runtime.running && !runtime.applying) {
-        saveConfig(readFormConfig());
-        runtime.appliedSignature = '';
-        setStatus('设置已变更，请先应用设置', 'warn');
-      }
+      if (!runtime.running) saveConfig(readFormConfig());
     });
-    runtime.applyButton.addEventListener('click', applySettings);
     runtime.startButton.addEventListener('click', runBatch);
     runtime.stopButton.addEventListener('click', stopBatch);
     shadow.querySelector('.collapse').addEventListener('click', () => {
