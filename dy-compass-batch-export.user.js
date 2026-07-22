@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.2.1
+// @version      1.2.2
 // @description  批量设置时间、价格、行业类目与榜单，串行调用页面的一键导出、加载全部和导出表格。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.2.1';
+  const SCRIPT_VERSION = '1.2.2';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -553,6 +553,32 @@
     return match ? Number(match[1]) : 0;
   }
 
+  function dialogPageNumbers(dialog) {
+    const elements = [...dialog.querySelectorAll('li,button,a,[role="button"]')].filter(isVisible);
+    return elements.map((element) => {
+      const value = normalizeText(element.textContent);
+      return /^\d+$/.test(value) ? { element, page: Number(value) } : null;
+    }).filter(Boolean);
+  }
+
+  function dialogActivePage(dialog) {
+    const active = dialog.querySelector(
+      '.ant-pagination-item-active,[aria-current="page"],[aria-selected="true"],[class*="pagination"] .active,[class*="pagination"] .selected',
+    );
+    const activeText = normalizeText(active?.textContent);
+    if (/^\d+$/.test(activeText)) return Number(activeText);
+    const marked = dialogPageNumbers(dialog).find(({ element }) =>
+      /(^|\s)(active|selected|current)(\s|$)/i.test(element.className || ''),
+    );
+    return marked?.page || 0;
+  }
+
+  function dialogLastPage(dialog, totalRows, visibleRows) {
+    const byTotal = totalRows > 0 && visibleRows > 0 ? Math.ceil(totalRows / visibleRows) : 0;
+    const byButtons = Math.max(0, ...dialogPageNumbers(dialog).map(({ page }) => page));
+    return Math.max(byTotal, byButtons);
+  }
+
   function loadAllSwitch(dialog, label) {
     const direct = label.closest('[role="switch"],label')?.querySelector?.('[role="switch"],input[type="checkbox"],[class*="switch"]');
     if (direct && isVisible(direct)) return direct;
@@ -606,45 +632,35 @@
 
   async function waitForLoadAll(dialog, toggle, exportButton, config, loadState = {}) {
     const timeoutMs = config.loadTimeoutSec * 1000;
-    const settleMs = Math.max(2500, config.settleSec * 1000);
-    const startedAt = Date.now();
     let lastSignature = '';
-    let stableSince = 0;
     let lastReportedRows = -1;
-    let sawActivity = false;
 
     return waitFor(() => {
       const total = totalRowsInDialog(dialog);
       const rows = dialog.querySelectorAll('tbody tr').length;
       const busy = visibleBusyCount(dialog);
-      const text = normalizeText(dialog.textContent);
-      const progress = text.match(/(?:加载|已获取|进度)[^%]{0,30}(?:\d+\s*%|\d+\s*\/\s*\d+)/)?.[0] || '';
       const signature = loadSignature(dialog, toggle, exportButton);
-      if (signature !== lastSignature) {
-        lastSignature = signature;
-        stableSince = Date.now();
-      }
+      lastSignature = signature;
       if (rows !== lastReportedRows) {
         lastReportedRows = rows;
         if (total) setStatus(`加载全部：${Math.min(rows, total)}/${total} 行`, 'running');
       }
 
-      const elapsed = Date.now() - startedAt;
-      const stableFor = Date.now() - stableSince;
       const toggleReady = !toggle || switchIsOn(toggle);
       const buttonReady = !isDisabled(exportButton);
       const allRowsVisible = total > 0 && rows >= total;
-      const dataChanged = rows !== loadState.initialRows || total !== loadState.initialTotal;
-      if (busy > 0 || dataChanged || progress) sawActivity = true;
+      const activePage = dialogActivePage(dialog);
+      const lastPage = dialogLastPage(dialog, total, rows);
 
-      // 有些版本会把全部数据缓存到扩展内部，表格仍只显示当前页。
-      // 不能因为“导出表格”按钮可点就立即导出：必须经历最短等待时间，且页面保持稳定。
-      const minimumWaitMs = Math.max(MIN_LOAD_ALL_WAIT_MS, settleMs * 4);
-      const stableFallback = elapsed >= minimumWaitMs
-        && stableFor >= Math.max(6000, settleMs)
-        && (sawActivity || elapsed >= minimumWaitMs + 10000);
-      return toggleReady && buttonReady && busy === 0 && (allRowsVisible || stableFallback);
-    }, '全部数据加载完成', timeoutMs, 500);
+      if (lastPage > 1) {
+        setStatus(`加载全部：正在加载第 ${activePage || '?'} / ${lastPage} 页`, 'running');
+      }
+
+      // 此页面会把“导出表格”按钮提前设为可点击。只有底部分页已经走到最后一页，
+      // 才允许导出；无法确认最后一页时继续等待，超时也不会提前导出。
+      const reachedLastPage = lastPage > 0 && activePage >= lastPage;
+      return toggleReady && buttonReady && busy === 0 && (allRowsVisible || reachedLastPage);
+    }, '全部数据加载完成（等待最后一页）', timeoutMs, 500);
   }
 
   function candidateCloseControl(dialog) {
@@ -668,8 +684,13 @@
     const closed = await waitFor(() => !isVisible(dialog), '导出弹窗关闭', 8000).catch(() => false);
     if (!closed) {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-      await waitFor(() => !isVisible(dialog), '导出弹窗关闭', 5000);
+      const closedAfterEscape = await waitFor(() => !isVisible(dialog), '导出弹窗关闭', 5000).catch(() => false);
+      if (!closedAfterEscape) {
+        appendLog('导出已触发，但弹窗未自动关闭；保留弹窗以免中断后续下载。', 'warn');
+        return false;
+      }
     }
+    return true;
   }
 
   async function exportOneTab(tabName, config) {
