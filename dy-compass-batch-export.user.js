@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.4
+// @version      1.3.5
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.4';
+  const SCRIPT_VERSION = '1.3.5';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -547,31 +547,40 @@
       })[0] || null;
   }
 
-  function exportDialogFromButton(exportButton) {
-    if (!exportButton) return null;
-    const semantic = exportButton.closest('[role="dialog"],.el-dialog,[class*="modal"],[class*="dialog"]');
-    if (semantic && isVisible(semantic) && normalizeText(semantic.textContent).includes('加载全部')) return semantic;
-    let current = exportButton.parentElement;
-    for (let depth = 0; current && depth < 12; depth += 1, current = current.parentElement) {
-      const text = normalizeText(current.textContent);
-      const rect = current.getBoundingClientRect();
-      if (text.includes('加载全部') && (current.querySelector('table') || /共\s*\d+\s*条/.test(text)) && rect.width > 500) return current;
-    }
-    return null;
+  function exportDialog() {
+    // 导出扩展使用 Element UI 的全屏弹窗。不要依赖标题中的榜单文案或按钮精确文本，
+    // 它们会随页面语言、榜单类型和扩展版本变化。
+    const candidates = [...document.querySelectorAll('.el-dialog__wrapper .el-dialog,[role="dialog"].el-dialog')]
+      .filter(isVisible)
+      .filter((dialog) => dialog.querySelector('.dynamic-table,.bottom_pagination,table'))
+      .filter((dialog) => dialog.querySelector('.bottom_pagination [role="switch"]'));
+    return candidates.at(-1) || null;
+  }
+
+  function exportButtonInDialog(dialog) {
+    if (!dialog) return null;
+    const buttons = [...dialog.querySelectorAll('button.el-button,button')].filter(isVisible);
+    return buttons.find((button) =>
+      normalizeText(button.textContent).includes('导出表格') ||
+      (button.querySelector('.el-icon-download') && !/caret-button/.test(button.className || '')),
+    ) || null;
+  }
+
+  function loadAllLabel(dialog) {
+    const container = dialog?.querySelector('.bottom_pagination .total_box:has([role="switch"])');
+    return container?.querySelector('span') || findExactText('加载全部', dialog) || null;
   }
 
   async function openExportDialog(tabName) {
     const entry = await waitFor(exportEntryButton, '页面上的“一键导出”按钮', 20000);
     await safeClick(entry, '页面上的“一键导出”按钮');
     const result = await waitFor(() => {
-      const exportButton = findExactText('导出表格');
-      const dialog = exportDialogFromButton(exportButton);
+      const dialog = exportDialog();
+      const exportButton = exportButtonInDialog(dialog);
       if (!exportButton || !dialog) return null;
-      const text = normalizeText(dialog.textContent);
-      if (!text.includes(tabName) && !text.includes('商品榜单')) return null;
       const rows = dialog.querySelectorAll('tbody tr').length;
-      return rows > 0 || /共\s*\d+\s*条/.test(text) ? { dialog, exportButton } : null;
-    }, `${tabName}导出弹窗正常显示`, 45000);
+      return rows > 0 || dialog.querySelector('.bottom_pagination') ? { dialog, exportButton } : null;
+    }, `${tabName}导出弹窗正常显示`, 90000);
     return result;
   }
 
@@ -591,12 +600,12 @@
   function initialExportPageReady(dialog) {
     const active = exportPager(dialog)?.querySelector('li.number.active');
     const rows = dialog.querySelectorAll('tbody tr').length;
-    const loadAllLabel = findExactText('加载全部', dialog);
+    const loadLabel = loadAllLabel(dialog);
     // 不把“导出表格”按钮可用作为前置条件：部分导出扩展只有在“加载全部”
     // 已开启并完成缓存后才会启用该按钮，等待它会造成永远不点击开关的死锁。
     return Boolean(
       rows > 0 &&
-      loadAllLabel &&
+      loadLabel &&
       (active || exportPager(dialog) || totalRowsInDialog(dialog) > 0)
     );
   }
@@ -666,7 +675,7 @@
   }
 
   async function enableLoadAll(dialog) {
-    const label = findExactText('加载全部', dialog);
+    const label = loadAllLabel(dialog);
     if (!label) throw new Error('导出弹窗中没有找到“加载全部”');
     const toggle = loadAllSwitch(dialog, label);
     const initialRows = dialog.querySelectorAll('tbody tr').length;
