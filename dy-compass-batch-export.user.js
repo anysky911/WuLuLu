@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.0
-// @description  先应用筛选设置；等待导出弹窗首屏加载完成后，再加载全部并导出商品榜单。
+// @version      1.3.1
+// @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.0';
+  const SCRIPT_VERSION = '1.3.1';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -639,6 +639,18 @@
     );
   }
 
+  async function ensureLoadAllOff(dialog) {
+    const label = await waitFor(() => findExactText('加载全部', dialog), '加载全部开关出现', 15000);
+    const toggle = loadAllSwitch(dialog, label);
+    if (!toggle) throw new Error('没有找到加载全部开关');
+    // 每次新弹窗都先确保开关关闭，不能沿用上一次弹窗或扩展保存的开启状态。
+    if (switchIsOn(toggle)) {
+      await safeClick(toggle, '加载全部开关（关闭）');
+      await waitFor(() => !switchIsOn(loadAllSwitch(dialog, label) || toggle), '加载全部开关关闭', 8000);
+    }
+    return { label, toggle: loadAllSwitch(dialog, label) || toggle };
+  }
+
   async function enableLoadAll(dialog) {
     const label = findExactText('加载全部', dialog);
     if (!label) throw new Error('导出弹窗中没有找到“加载全部”');
@@ -747,6 +759,8 @@
     setStatus(`正在打开 ${tabName} 导出弹窗`, 'running');
     appendLog('点击页面“一键导出”');
     const { dialog, exportButton } = await openExportDialog(tabName);
+    appendLog('确认“加载全部”开关保持关闭');
+    await ensureLoadAllOff(dialog);
     setStatus('正在等待导出弹窗首屏加载', 'running');
     appendLog('弹窗已显示，等待首屏表格与分页加载完成');
     await waitForInitialExportPage(dialog, exportButton);
