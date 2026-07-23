@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.9
+// @version      1.4.0
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.9';
+  const SCRIPT_VERSION = '1.4.0';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -956,11 +956,6 @@
     updateSameDayDates();
   }
 
-  function todayIsoDate() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  }
-
   function updateSameDayDates() {
     const form = runtime.form;
     if (!form) return;
@@ -969,14 +964,26 @@
     const end = form.elements.endDate;
     if (!start || !end) return;
     if (enabled) {
-      const today = todayIsoDate();
-      start.value = today;
-      end.value = today;
+      // “当天”表示起止日期相同，不表示跳转到今天。
+      // 保留当前开始日期；若只选了结束日期则将它作为同一天。
+      const selectedDate = start.value || end.value;
+      if (selectedDate) {
+        start.value = selectedDate;
+        end.value = selectedDate;
+      }
     }
-    start.readOnly = enabled;
+    start.readOnly = false;
     end.readOnly = enabled;
-    start.setAttribute('aria-disabled', String(enabled));
+    start.setAttribute('aria-disabled', 'false');
     end.setAttribute('aria-disabled', String(enabled));
+  }
+
+  function syncSameDayEndDate() {
+    const form = runtime.form;
+    if (!form?.elements.sameDay?.checked || form.elements.timeMode?.value !== 'naturalDay') return;
+    const start = form.elements.startDate;
+    const end = form.elements.endDate;
+    if (start?.value) end.value = start.value;
   }
 
   function populateForm(config) {
@@ -1151,6 +1158,10 @@
     populateForm(loadConfig());
     runtime.form.elements.timeMode.addEventListener('change', updateCustomDateVisibility);
     runtime.form.elements.sameDay.addEventListener('change', updateSameDayDates);
+    runtime.form.elements.startDate.addEventListener('input', syncSameDayEndDate);
+    runtime.form.elements.startDate.addEventListener('change', syncSameDayEndDate);
+    runtime.form.elements.endDate.addEventListener('input', syncSameDayEndDate);
+    runtime.form.elements.endDate.addEventListener('change', syncSameDayEndDate);
     runtime.form.addEventListener('change', () => {
       if (!runtime.running && !runtime.applying) {
         saveConfig(readFormConfig());
