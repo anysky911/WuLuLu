@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.1
+// @version      1.3.2
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.1';
+  const SCRIPT_VERSION = '1.3.2';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -34,7 +34,7 @@
     category2: '服装',
     category3: '童装',
     tabs: [...RANK_TABS],
-    loadTimeoutSec: 240,
+    loadTimeoutSec: 600,
     settleSec: 4,
   };
 
@@ -311,7 +311,7 @@
       if (!config.startDate || !config.endDate) throw new Error('自定义日期需要填写开始和结束日期');
       if (config.startDate > config.endDate) throw new Error('开始日期不能晚于结束日期');
     }
-    if (config.loadTimeoutSec < 30 || config.loadTimeoutSec > 900) throw new Error('加载超时应为 30–900 秒');
+    if (config.loadTimeoutSec < 30 || config.loadTimeoutSec > 1800) throw new Error('加载超时应为 30–1800 秒');
   }
 
   async function selectRankTab(tabName) {
@@ -564,29 +564,29 @@
     return [...(exportPager(dialog)?.querySelectorAll('li.number') || [])].filter(isVisible);
   }
 
-  function initialExportPageReady(dialog, exportButton) {
+  function initialExportPageReady(dialog) {
     const active = exportPager(dialog)?.querySelector('li.number.active');
     const rows = dialog.querySelectorAll('tbody tr').length;
-    // 初始请求期间扩展会把当前页标成 read-only；首屏加载完成后当前页会恢复为 active。
+    const loadAllLabel = findExactText('加载全部', dialog);
+    // 不把“导出表格”按钮可用作为前置条件：部分导出扩展只有在“加载全部”
+    // 已开启并完成缓存后才会启用该按钮，等待它会造成永远不点击开关的死锁。
     return Boolean(
       rows > 0 &&
-      active &&
-      !active.classList.contains('read-only') &&
-      visibleBusyCount(dialog) === 0 &&
-      !isDisabled(exportButton)
+      loadAllLabel &&
+      (active || exportPager(dialog) || totalRowsInDialog(dialog) > 0)
     );
   }
 
-  async function waitForInitialExportPage(dialog, exportButton) {
+  async function waitForInitialExportPage(dialog) {
     let readySince = 0;
     await waitFor(() => {
-      if (!initialExportPageReady(dialog, exportButton)) {
+      if (!initialExportPageReady(dialog)) {
         readySince = 0;
         return false;
       }
       if (!readySince) readySince = Date.now();
       return Date.now() - readySince >= 1000;
-    }, '导出弹窗首屏加载完成', 45000, 300);
+    }, '导出弹窗的表格和“加载全部”控件出现', 90000, 300);
   }
 
   function dialogPageNumbers(dialog) {
@@ -618,7 +618,9 @@
   function loadAllSwitch(dialog, label) {
     const exactSwitch = dialog.querySelector('.bottom_pagination .total_box [role="switch"]');
     if (exactSwitch && isVisible(exactSwitch)) return exactSwitch;
-    const direct = label.closest('[role="switch"],label')?.querySelector?.('[role="switch"],input[type="checkbox"],[class*="switch"]');
+    const elementSwitch = dialog.querySelector('.bottom_pagination .total_box .el-switch,.bottom_pagination .total_box [class*="switch"]');
+    if (elementSwitch && isVisible(elementSwitch)) return elementSwitch;
+    const direct = label.closest('[role="switch"],label,.el-switch,[class*="switch"]')?.querySelector?.('[role="switch"],input[type="checkbox"],[class*="switch"]');
     if (direct && isVisible(direct)) return direct;
     let current = label.parentElement;
     for (let depth = 0; current && current !== dialog && depth < 5; depth += 1, current = current.parentElement) {
@@ -639,24 +641,13 @@
     );
   }
 
-  async function ensureLoadAllOff(dialog) {
-    const label = await waitFor(() => findExactText('加载全部', dialog), '加载全部开关出现', 15000);
-    const toggle = loadAllSwitch(dialog, label);
-    if (!toggle) throw new Error('没有找到加载全部开关');
-    // 每次新弹窗都先确保开关关闭，不能沿用上一次弹窗或扩展保存的开启状态。
-    if (switchIsOn(toggle)) {
-      await safeClick(toggle, '加载全部开关（关闭）');
-      await waitFor(() => !switchIsOn(loadAllSwitch(dialog, label) || toggle), '加载全部开关关闭', 8000);
-    }
-    return { label, toggle: loadAllSwitch(dialog, label) || toggle };
-  }
-
   async function enableLoadAll(dialog) {
     const label = findExactText('加载全部', dialog);
     if (!label) throw new Error('导出弹窗中没有找到“加载全部”');
     const toggle = loadAllSwitch(dialog, label);
     const initialRows = dialog.querySelectorAll('tbody tr').length;
     const initialTotal = totalRowsInDialog(dialog);
+    if (!toggle) throw new Error('没有找到“加载全部”开关');
     if (!switchIsOn(toggle)) {
       await safeClick(toggle || label, '加载全部开关');
       await waitFor(() => switchIsOn(loadAllSwitch(dialog, label) || toggle), '加载全部开关已开启', 8000);
@@ -759,12 +750,10 @@
     setStatus(`正在打开 ${tabName} 导出弹窗`, 'running');
     appendLog('点击页面“一键导出”');
     const { dialog, exportButton } = await openExportDialog(tabName);
-    appendLog('确认“加载全部”开关保持关闭');
-    await ensureLoadAllOff(dialog);
-    setStatus('正在等待导出弹窗首屏加载', 'running');
-    appendLog('弹窗已显示，等待首屏表格与分页加载完成');
-    await waitForInitialExportPage(dialog, exportButton);
-    appendLog('首屏已加载完成，开启“加载全部”');
+    setStatus('正在等待导出弹窗控件出现', 'running');
+    appendLog('弹窗已显示；发现首屏数据与“加载全部”后立即开启，不等待导出按钮');
+    await waitForInitialExportPage(dialog);
+    appendLog('首屏控件已就绪，立即开启“加载全部”');
     const loadState = await enableLoadAll(dialog);
     await waitForLoadAll(dialog, loadState.toggle, exportButton, config, loadState);
 
@@ -1055,7 +1044,7 @@
               </div>
               <details>
                 <summary>高级等待设置</summary>
-                <div class="field"><label>加载超时</label><div class="row"><input name="loadTimeoutSec" type="number" min="30" max="900"><span class="sep">秒</span></div></div>
+                <div class="field"><label>加载超时</label><div class="row"><input name="loadTimeoutSec" type="number" min="30" max="1800"><span class="sep">秒</span></div></div>
                 <div class="field"><label>稳定判定</label><div class="row"><input name="settleSec" type="number" min="3" max="30"><span class="sep">秒</span></div></div>
               </details>
             </div>
