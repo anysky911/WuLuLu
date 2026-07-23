@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.3
+// @version      1.3.4
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.3';
+  const SCRIPT_VERSION = '1.3.4';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -333,19 +333,19 @@
     await waitForRankControlsReady();
   }
 
-  function quickDateOption(text) {
-    // 罗盘页面的日期项在不同榜单中可能是 button、a 或普通 div；
-    // 不依赖 XPath 的“完整节点文本”，以兼容图标/空格包裹的日期文案。
-    const candidates = [...document.querySelectorAll('button,a,label,li,div,span')]
-      .filter(isVisible)
-      .filter((element) => normalizeText(element.textContent) === text)
-      .map((element) => clickableTarget(element))
-      .filter((element, index, array) => element && array.indexOf(element) === index)
+  function quickDateOption(timeMode) {
+    // 罗盘的日期快捷项是 ecom-radio-button-input，而不是普通文字按钮。
+    // 使用稳定的 value（one/seven/thirty）定位其外层 label，避免 React 嵌套文本导致的精确文案查找失败。
+    const selector = '.ecom-tabs-extra-content .ecom-radio-button-input';
+    const inputs = [...document.querySelectorAll(selector)]
+      .filter((input) => input.value === timeMode)
+      .map((input) => input.closest('label.ecom-radio-button-wrapper') || input.closest('label'))
       .filter(isVisible);
-    return candidates.sort((a, b) => scoreTextTarget(b, text) - scoreTextTarget(a, text))[0] || null;
+    return inputs[0] || null;
   }
 
   function quickDateIsSelected(target) {
+    if (target?.classList?.contains('ecom-radio-button-wrapper-checked')) return true;
     for (let current = target; current && current !== document.body; current = current.parentElement) {
       if (
         current.getAttribute('aria-selected') === 'true' ||
@@ -359,18 +359,17 @@
   async function applyQuickDate(timeMode) {
     const labelMap = { one: '近1天', seven: '近7天', thirty: '近30天' };
     const labelText = labelMap[timeMode];
-    const label = quickDateOption(labelText) || findExactText(labelText);
+    const label = quickDateOption(timeMode);
     if (!label) {
-      throw new Error(`没有找到日期选项“${labelText}”；请确认当前榜单页面已显示“实时 / 近1天 / 近7天 / 近30天”快捷日期栏`);
+      throw new Error(`没有找到日期选项“${labelText}”（value=${timeMode}）；请确认当前榜单页面已显示日期快捷栏`);
     }
-    const input = label.matches?.('input[type="radio"]') ? label : label.querySelector?.('input[type="radio"]');
-    const selected = input?.checked || quickDateIsSelected(label);
+    // 页面偶尔会保留其他 radio 的 checked 属性；以外层 checked 样式作为唯一的选中依据。
+    const selected = quickDateIsSelected(label);
     if (!selected) {
       await safeClick(label, `日期选项${labelText}`);
       await waitFor(() => {
-        const current = quickDateOption(labelText) || findExactText(labelText);
-        const currentInput = current?.matches?.('input[type="radio"]') ? current : current?.querySelector?.('input[type="radio"]');
-        return Boolean(currentInput?.checked || (current && quickDateIsSelected(current)));
+        const current = quickDateOption(timeMode);
+        return Boolean(current && quickDateIsSelected(current));
       }, `日期切换为${labelText}`, 15000);
       await waitForPageReady();
     }
