@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.7
+// @version      1.3.8
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.7';
+  const SCRIPT_VERSION = '1.3.8';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -28,6 +28,7 @@
     timeMode: 'seven',
     startDate: '',
     endDate: '',
+    sameDay: false,
     minPrice: '0',
     maxPrice: '200',
     category1: '服饰内衣',
@@ -289,6 +290,7 @@
       timeMode: data.get('timeMode'),
       startDate: data.get('startDate') || '',
       endDate: data.get('endDate') || '',
+      sameDay: data.get('sameDay') === 'on',
       minPrice: String(data.get('minPrice') ?? '').trim(),
       maxPrice: String(data.get('maxPrice') ?? '').trim(),
       category1: String(data.get('category1') || '').trim(),
@@ -812,6 +814,7 @@
       timeMode: config.timeMode,
       startDate: config.startDate,
       endDate: config.endDate,
+      sameDay: config.sameDay,
       minPrice: config.minPrice,
       maxPrice: config.maxPrice,
       category1: config.category1,
@@ -945,6 +948,30 @@
     const mode = runtime.form?.elements.timeMode?.value;
     const row = runtime.shadow?.querySelector('.custom-date-row');
     if (row) row.hidden = !['custom', 'naturalDay'].includes(mode);
+    updateSameDayDates();
+  }
+
+  function todayIsoDate() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }
+
+  function updateSameDayDates() {
+    const form = runtime.form;
+    if (!form) return;
+    const enabled = Boolean(form.elements.sameDay?.checked) && form.elements.timeMode?.value === 'naturalDay';
+    const start = form.elements.startDate;
+    const end = form.elements.endDate;
+    if (!start || !end) return;
+    if (enabled) {
+      const today = todayIsoDate();
+      start.value = today;
+      end.value = today;
+    }
+    start.readOnly = enabled;
+    end.readOnly = enabled;
+    start.setAttribute('aria-disabled', String(enabled));
+    end.setAttribute('aria-disabled', String(enabled));
   }
 
   function populateForm(config) {
@@ -952,6 +979,7 @@
     form.elements.timeMode.value = config.timeMode;
     form.elements.startDate.value = config.startDate;
     form.elements.endDate.value = config.endDate;
+    form.elements.sameDay.checked = Boolean(config.sameDay);
     form.elements.minPrice.value = config.minPrice;
     form.elements.maxPrice.value = config.maxPrice;
     form.elements.category1.value = config.category1;
@@ -1018,12 +1046,15 @@
         .field > label { color:#4f5b70; }
         .row { display:flex; align-items:center; gap:7px; }
         input,select { width:100%; height:32px; border:1px solid #ccd5e5; border-radius:7px; padding:0 8px; color:#172033; background:#fff; outline:none; font:inherit; }
+        input[type="date"] { color-scheme:light; font-family:"Segoe UI","Microsoft YaHei",Arial,sans-serif; font-size:13px; font-weight:400; }
+        input[type="date"]::-webkit-datetime-edit { font-family:"Segoe UI","Microsoft YaHei",Arial,sans-serif; font-weight:400; }
         input:focus,select:focus { border-color:#4771ff; box-shadow:0 0 0 2px rgba(71,113,255,.12); }
         input:disabled,select:disabled { color:#7b8495; background:#f3f5f8; }
         .sep { color:#9aa4b5; flex:0 0 auto; }
         .tabs { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
         .check { display:flex; align-items:center; gap:7px; min-height:31px; padding:0 8px; border:1px solid #e2e7f0; border-radius:7px; cursor:pointer; }
         .check input { width:15px; height:15px; accent-color:#315ff4; }
+        .same-day-check { grid-column:2; margin-top:0; }
         details { margin-top:6px; color:#69758b; }
         summary { cursor:pointer; user-select:none; }
         .actions { display:grid; grid-template-columns:1fr 1fr 70px; gap:8px; margin-top:10px; }
@@ -1070,6 +1101,7 @@
               <div class="field custom-date-row" hidden>
                 <label>日期范围</label>
                 <div class="row"><input name="startDate" type="date"><span class="sep">至</span><input name="endDate" type="date"></div>
+                <label class="check same-day-check"><input type="checkbox" name="sameDay"><span>当天（开始与结束日期相同）</span></label>
               </div>
               <div class="field">
                 <label>价格</label>
@@ -1114,6 +1146,7 @@
 
     populateForm(loadConfig());
     runtime.form.elements.timeMode.addEventListener('change', updateCustomDateVisibility);
+    runtime.form.elements.sameDay.addEventListener('change', updateSameDayDates);
     runtime.form.addEventListener('change', () => {
       if (!runtime.running && !runtime.applying) {
         saveConfig(readFormConfig());
