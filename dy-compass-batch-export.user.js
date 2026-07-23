@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.6
+// @version      1.3.7
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.6';
+  const SCRIPT_VERSION = '1.3.7';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -308,7 +308,7 @@
     if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error('价格必须是有效数字');
     if (min < 0 || max <= min) throw new Error('价格上限必须大于下限，且下限不能小于 0');
     if (['custom', 'naturalDay'].includes(config.timeMode)) {
-      if (!config.startDate || !config.endDate) throw new Error('自然日/自定义日期需要手动填写开始和结束日期');
+      if (!config.startDate || !config.endDate) throw new Error('自然日/自定义日期需要选择开始和结束日期');
       if (config.startDate > config.endDate) throw new Error('开始日期不能晚于结束日期');
     }
     if (config.loadTimeoutSec < 30 || config.loadTimeoutSec > 1800) throw new Error('加载超时应为 30–1800 秒');
@@ -395,7 +395,7 @@
     });
   }
 
-  async function applyCustomDate(startDate, endDate, datePreset = null) {
+  async function applyCustomDate(startDate, endDate, datePreset = null, allowInputFallback = true) {
     const moreText = quickDateOption('more') || findExactText('更多');
     if (!moreText) throw new Error('没有找到“更多”日期入口');
     await safeClick(moreText, '更多日期');
@@ -414,7 +414,7 @@
       await sleep(250);
       endCell = dateCell(endDate);
       await safeClick(endCell, `结束日期 ${endDate}`);
-    } else {
+    } else if (allowInputFallback) {
       const inputs = await waitFor(() => {
         const candidates = visibleDateInputs();
         return candidates.length >= 2 ? candidates : null;
@@ -426,6 +426,8 @@
       const endInput = inputs.find((input) => /(结束|end)/i.test(`${input.placeholder} ${input.getAttribute('aria-label')}`)) || inputs[1];
       await fillInput(startInput, startDate, '开始日期输入框');
       await fillInput(endInput, endDate, '结束日期输入框');
+    } else {
+      throw new Error('自然日日期范围未出现在当前日历中；请用面板日期选择器选择同月日期，或先在罗盘日历中切换到目标月份后重试');
     }
 
     const confirm = findExactText('确定') || findExactText('确认');
@@ -435,7 +437,7 @@
   }
 
   async function applyDate(config) {
-    if (config.timeMode === 'naturalDay') await applyCustomDate(config.startDate, config.endDate, '自然日');
+    if (config.timeMode === 'naturalDay') await applyCustomDate(config.startDate, config.endDate, '自然日', false);
     else if (config.timeMode === 'custom') await applyCustomDate(config.startDate, config.endDate);
     else await applyQuickDate(config.timeMode);
   }
@@ -1061,12 +1063,12 @@
                   <option value="one">近1天</option>
                   <option value="seven">近7天</option>
                   <option value="thirty">近30天</option>
-                  <option value="naturalDay">自然日（手动输入）</option>
+                  <option value="naturalDay">自然日（日期范围选择）</option>
                   <option value="custom">自定义日期</option>
                 </select>
               </div>
               <div class="field custom-date-row" hidden>
-                <label>日期</label>
+                <label>日期范围</label>
                 <div class="row"><input name="startDate" type="date"><span class="sep">至</span><input name="endDate" type="date"></div>
               </div>
               <div class="field">
