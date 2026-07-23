@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.2.2
-// @description  批量设置时间、价格、行业类目与榜单，串行调用页面的一键导出、加载全部和导出表格。
+// @version      1.3.0
+// @description  先应用筛选设置；等待导出弹窗首屏加载完成后，再加载全部并导出商品榜单。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.2.2';
+  const SCRIPT_VERSION = '1.3.0';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -52,9 +52,12 @@
     logBox: null,
     statusEl: null,
     progressEl: null,
+    applyButton: null,
     startButton: null,
     stopButton: null,
     form: null,
+    applying: false,
+    appliedSignature: '',
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -553,6 +556,39 @@
     return match ? Number(match[1]) : 0;
   }
 
+  function exportPager(dialog) {
+    return dialog.querySelector('.bottom_pagination .el-pager');
+  }
+
+  function pagerNumbers(dialog) {
+    return [...(exportPager(dialog)?.querySelectorAll('li.number') || [])].filter(isVisible);
+  }
+
+  function initialExportPageReady(dialog, exportButton) {
+    const active = exportPager(dialog)?.querySelector('li.number.active');
+    const rows = dialog.querySelectorAll('tbody tr').length;
+    // 初始请求期间扩展会把当前页标成 read-only；首屏加载完成后当前页会恢复为 active。
+    return Boolean(
+      rows > 0 &&
+      active &&
+      !active.classList.contains('read-only') &&
+      visibleBusyCount(dialog) === 0 &&
+      !isDisabled(exportButton)
+    );
+  }
+
+  async function waitForInitialExportPage(dialog, exportButton) {
+    let readySince = 0;
+    await waitFor(() => {
+      if (!initialExportPageReady(dialog, exportButton)) {
+        readySince = 0;
+        return false;
+      }
+      if (!readySince) readySince = Date.now();
+      return Date.now() - readySince >= 1000;
+    }, '导出弹窗首屏加载完成', 45000, 300);
+  }
+
   function dialogPageNumbers(dialog) {
     const elements = [...dialog.querySelectorAll('li,button,a,[role="button"]')].filter(isVisible);
     return elements.map((element) => {
@@ -580,6 +616,8 @@
   }
 
   function loadAllSwitch(dialog, label) {
+    const exactSwitch = dialog.querySelector('.bottom_pagination .total_box [role="switch"]');
+    if (exactSwitch && isVisible(exactSwitch)) return exactSwitch;
     const direct = label.closest('[role="switch"],label')?.querySelector?.('[role="switch"],input[type="checkbox"],[class*="switch"]');
     if (direct && isVisible(direct)) return direct;
     let current = label.parentElement;
@@ -649,18 +687,19 @@
       const toggleReady = !toggle || switchIsOn(toggle);
       const buttonReady = !isDisabled(exportButton);
       const allRowsVisible = total > 0 && rows >= total;
-      const activePage = dialogActivePage(dialog);
-      const lastPage = dialogLastPage(dialog, total, rows);
+      const pages = pagerNumbers(dialog);
+      const nonActivePages = pages.filter((page) => !page.classList.contains('active'));
+      // 插件后台依次预加载页码。加载完成的页会带 read-only（同时显示橙点）；
+      // 当前活动页仍保持 active，不会跳到最后一页，因此不能拿 active 页码判断完成。
+      const allPagesCached = nonActivePages.length > 0 && nonActivePages.every((page) => page.classList.contains('read-only'));
 
-      if (lastPage > 1) {
-        setStatus(`加载全部：正在加载第 ${activePage || '?'} / ${lastPage} 页`, 'running');
+      if (pages.length > 1) {
+        const cached = nonActivePages.filter((page) => page.classList.contains('read-only')).length;
+        setStatus(`加载全部：已缓存 ${cached}/${nonActivePages.length} 个分页标记`, 'running');
       }
 
-      // 此页面会把“导出表格”按钮提前设为可点击。只有底部分页已经走到最后一页，
-      // 才允许导出；无法确认最后一页时继续等待，超时也不会提前导出。
-      const reachedLastPage = lastPage > 0 && activePage >= lastPage;
-      return toggleReady && buttonReady && busy === 0 && (allRowsVisible || reachedLastPage);
-    }, '全部数据加载完成（等待最后一页）', timeoutMs, 500);
+      return toggleReady && buttonReady && busy === 0 && (allRowsVisible || allPagesCached);
+    }, '全部数据加载完成（等待分页缓存）', timeoutMs, 500);
   }
 
   function candidateCloseControl(dialog) {
@@ -708,7 +747,10 @@
     setStatus(`正在打开 ${tabName} 导出弹窗`, 'running');
     appendLog('点击页面“一键导出”');
     const { dialog, exportButton } = await openExportDialog(tabName);
-    appendLog('弹窗已正常显示，开启“加载全部”');
+    setStatus('正在等待导出弹窗首屏加载', 'running');
+    appendLog('弹窗已显示，等待首屏表格与分页加载完成');
+    await waitForInitialExportPage(dialog, exportButton);
+    appendLog('首屏已加载完成，开启“加载全部”');
     const loadState = await enableLoadAll(dialog);
     await waitForLoadAll(dialog, loadState.toggle, exportButton, config, loadState);
 
@@ -720,6 +762,64 @@
     await closeExportDialog(dialog);
   }
 
+  function configSignature(config) {
+    return JSON.stringify({
+      timeMode: config.timeMode,
+      startDate: config.startDate,
+      endDate: config.endDate,
+      minPrice: config.minPrice,
+      maxPrice: config.maxPrice,
+      category1: config.category1,
+      category2: config.category2,
+      category3: config.category3,
+      tabs: config.tabs,
+    });
+  }
+
+  function activeRankTab() {
+    return RANK_TABS.find((tabName) => visibleElementsByExactText(tabName)
+      .map((element) => element.closest('[role="tab"]') || element)
+      .some((element) => isVisible(element) && (
+        element.getAttribute('aria-selected') === 'true' || /active/i.test(element.className || '')
+      ))) || null;
+  }
+
+  async function applySettings() {
+    if (runtime.running || runtime.applying) return;
+    const config = readFormConfig();
+    try {
+      validateConfig(config);
+    } catch (error) {
+      setStatus(error.message, 'error');
+      appendLog(error.message, 'error');
+      return;
+    }
+
+    runtime.applying = true;
+    runtime.applyButton.disabled = true;
+    try {
+      const activeTab = activeRankTab();
+      const tabName = config.tabs.includes(activeTab) ? activeTab : config.tabs[0];
+      setStatus(`正在应用设置到 ${tabName}`, 'running');
+      appendLog(`应用设置：${tabName}`);
+      await selectRankTab(tabName);
+      await applyDate(config);
+      await applyCategory(config);
+      await applyPrice(config);
+      saveConfig(config);
+      runtime.appliedSignature = configSignature(config);
+      setStatus(`设置已应用：${tabName} 已刷新`, 'success');
+      appendLog('设置已应用，请确认筛选条件后开始导出', 'success');
+    } catch (error) {
+      setStatus(`应用设置失败：${error.message}`, 'error');
+      appendLog(`应用设置失败：${error.message}`, 'error');
+      console.error(error);
+    } finally {
+      runtime.applying = false;
+      runtime.applyButton.disabled = false;
+    }
+  }
+
   async function runBatch() {
     if (runtime.running) return;
     const config = readFormConfig();
@@ -728,6 +828,13 @@
     } catch (error) {
       setStatus(error.message, 'error');
       appendLog(error.message, 'error');
+      return;
+    }
+
+    if (runtime.appliedSignature !== configSignature(config)) {
+      const message = '请先点击“应用设置”，等待页面筛选条件刷新后再开始导出。';
+      setStatus(message, 'warn');
+      appendLog(message, 'warn');
       return;
     }
 
@@ -742,6 +849,7 @@
     saveConfig(config);
     runtime.running = true;
     runtime.stopRequested = false;
+    runtime.applyButton.disabled = true;
     runtime.startButton.disabled = true;
     runtime.stopButton.disabled = false;
     [...runtime.form.elements].forEach((control) => { if (control !== runtime.stopButton) control.disabled = true; });
@@ -773,6 +881,7 @@
     } finally {
       runtime.running = false;
       [...runtime.form.elements].forEach((control) => { control.disabled = false; });
+      runtime.applyButton.disabled = false;
       runtime.startButton.disabled = false;
       runtime.stopButton.disabled = true;
       updateCustomDateVisibility();
@@ -872,8 +981,9 @@
         .check input { width:15px; height:15px; accent-color:#315ff4; }
         details { margin-top:6px; color:#69758b; }
         summary { cursor:pointer; user-select:none; }
-        .actions { display:grid; grid-template-columns:1fr 88px; gap:8px; margin-top:10px; }
+        .actions { display:grid; grid-template-columns:1fr 1fr 70px; gap:8px; margin-top:10px; }
         button.action { height:36px; border:0; border-radius:8px; cursor:pointer; font:600 13px inherit; }
+        .apply { color:#2447a8; background:#e9efff; }
         .start { color:#fff; background:#315ff4; }
         .stop { color:#cf3e48; background:#fff0f1; }
         button:disabled { cursor:not-allowed; opacity:.48; }
@@ -936,6 +1046,7 @@
               </details>
             </div>
             <div class="actions">
+              <button class="action apply" type="button">应用设置</button>
               <button class="action start" type="button">开始一键导出</button>
               <button class="action stop" type="button" disabled>停止</button>
             </div>
@@ -951,14 +1062,20 @@
     runtime.logBox = shadow.querySelector('.logs');
     runtime.statusEl = shadow.querySelector('.status');
     runtime.progressEl = shadow.querySelector('.progress');
+    runtime.applyButton = shadow.querySelector('.apply');
     runtime.startButton = shadow.querySelector('.start');
     runtime.stopButton = shadow.querySelector('.stop');
 
     populateForm(loadConfig());
     runtime.form.elements.timeMode.addEventListener('change', updateCustomDateVisibility);
     runtime.form.addEventListener('change', () => {
-      if (!runtime.running) saveConfig(readFormConfig());
+      if (!runtime.running && !runtime.applying) {
+        saveConfig(readFormConfig());
+        runtime.appliedSignature = '';
+        setStatus('设置已变更，请先应用设置', 'warn');
+      }
     });
+    runtime.applyButton.addEventListener('click', applySettings);
     runtime.startButton.addEventListener('click', runBatch);
     runtime.stopButton.addEventListener('click', stopBatch);
     shadow.querySelector('.collapse').addEventListener('click', () => {
