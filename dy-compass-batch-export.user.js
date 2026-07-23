@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.2
+// @version      1.3.3
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.2';
+  const SCRIPT_VERSION = '1.3.3';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -333,19 +333,44 @@
     await waitForRankControlsReady();
   }
 
+  function quickDateOption(text) {
+    // 罗盘页面的日期项在不同榜单中可能是 button、a 或普通 div；
+    // 不依赖 XPath 的“完整节点文本”，以兼容图标/空格包裹的日期文案。
+    const candidates = [...document.querySelectorAll('button,a,label,li,div,span')]
+      .filter(isVisible)
+      .filter((element) => normalizeText(element.textContent) === text)
+      .map((element) => clickableTarget(element))
+      .filter((element, index, array) => element && array.indexOf(element) === index)
+      .filter(isVisible);
+    return candidates.sort((a, b) => scoreTextTarget(b, text) - scoreTextTarget(a, text))[0] || null;
+  }
+
+  function quickDateIsSelected(target) {
+    for (let current = target; current && current !== document.body; current = current.parentElement) {
+      if (
+        current.getAttribute('aria-selected') === 'true' ||
+        current.getAttribute('aria-checked') === 'true' ||
+        /(^|\\s)(active|selected|checked|current)(\\s|$)/i.test(current.className || '')
+      ) return true;
+    }
+    return false;
+  }
+
   async function applyQuickDate(timeMode) {
     const labelMap = { one: '近1天', seven: '近7天', thirty: '近30天' };
     const labelText = labelMap[timeMode];
-    const textElement = findExactText(labelText);
-    if (!textElement) throw new Error(`没有找到日期选项“${labelText}”`);
-    const label = textElement.closest('label') || textElement;
-    const input = label.querySelector?.('input[type="radio"]');
-    const selected = input?.checked || /checked|active/i.test(label.className || '');
+    const label = quickDateOption(labelText) || findExactText(labelText);
+    if (!label) {
+      throw new Error(`没有找到日期选项“${labelText}”；请确认当前榜单页面已显示“实时 / 近1天 / 近7天 / 近30天”快捷日期栏`);
+    }
+    const input = label.matches?.('input[type="radio"]') ? label : label.querySelector?.('input[type="radio"]');
+    const selected = input?.checked || quickDateIsSelected(label);
     if (!selected) {
       await safeClick(label, `日期选项${labelText}`);
       await waitFor(() => {
-        const current = findExactText(labelText)?.closest('label');
-        return current?.querySelector('input[type="radio"]')?.checked || /checked|active/i.test(current?.className || '');
+        const current = quickDateOption(labelText) || findExactText(labelText);
+        const currentInput = current?.matches?.('input[type="radio"]') ? current : current?.querySelector?.('input[type="radio"]');
+        return Boolean(currentInput?.checked || (current && quickDateIsSelected(current)));
       }, `日期切换为${labelText}`, 15000);
       await waitForPageReady();
     }
