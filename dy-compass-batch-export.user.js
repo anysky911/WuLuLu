@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.5
+// @version      1.3.6
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.5';
+  const SCRIPT_VERSION = '1.3.6';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -307,8 +307,8 @@
     const max = Number(config.maxPrice);
     if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error('价格必须是有效数字');
     if (min < 0 || max <= min) throw new Error('价格上限必须大于下限，且下限不能小于 0');
-    if (config.timeMode === 'custom') {
-      if (!config.startDate || !config.endDate) throw new Error('自定义日期需要填写开始和结束日期');
+    if (['custom', 'naturalDay'].includes(config.timeMode)) {
+      if (!config.startDate || !config.endDate) throw new Error('自然日/自定义日期需要手动填写开始和结束日期');
       if (config.startDate > config.endDate) throw new Error('开始日期不能晚于结束日期');
     }
     if (config.loadTimeoutSec < 30 || config.loadTimeoutSec > 1800) throw new Error('加载超时应为 30–1800 秒');
@@ -395,11 +395,17 @@
     });
   }
 
-  async function applyCustomDate(startDate, endDate) {
-    const moreText = findExactText('更多');
+  async function applyCustomDate(startDate, endDate, datePreset = null) {
+    const moreText = quickDateOption('more') || findExactText('更多');
     if (!moreText) throw new Error('没有找到“更多”日期入口');
-    await safeClick(moreText.closest('label') || moreText, '更多日期');
+    await safeClick(moreText, '更多日期');
     await sleep(500);
+
+    if (datePreset) {
+      const preset = await waitFor(() => findExactText(datePreset), `日期模式“${datePreset}”出现`, 8000);
+      await safeClick(preset.closest('label') || preset, `日期模式“${datePreset}”`);
+      await sleep(300);
+    }
 
     let startCell = dateCell(startDate);
     let endCell = dateCell(endDate);
@@ -414,7 +420,7 @@
         return candidates.length >= 2 ? candidates : null;
       }, '自定义日期输入框', 8000).catch(() => null);
       if (!inputs) {
-        throw new Error('当前版本的日期面板无法自动定位目标日期；请改用近1天/近7天/近30天，或先手动切好日期后再执行');
+        throw new Error('日期面板无法定位手动输入的日期；请确认已打开“更多 → 自然日/自定义日期”，或先在页面中手动选择日期后再执行');
       }
       const startInput = inputs.find((input) => /(开始|起始|start)/i.test(`${input.placeholder} ${input.getAttribute('aria-label')}`)) || inputs[0];
       const endInput = inputs.find((input) => /(结束|end)/i.test(`${input.placeholder} ${input.getAttribute('aria-label')}`)) || inputs[1];
@@ -429,7 +435,8 @@
   }
 
   async function applyDate(config) {
-    if (config.timeMode === 'custom') await applyCustomDate(config.startDate, config.endDate);
+    if (config.timeMode === 'naturalDay') await applyCustomDate(config.startDate, config.endDate, '自然日');
+    else if (config.timeMode === 'custom') await applyCustomDate(config.startDate, config.endDate);
     else await applyQuickDate(config.timeMode);
   }
 
@@ -935,7 +942,7 @@
   function updateCustomDateVisibility() {
     const mode = runtime.form?.elements.timeMode?.value;
     const row = runtime.shadow?.querySelector('.custom-date-row');
-    if (row) row.hidden = mode !== 'custom';
+    if (row) row.hidden = !['custom', 'naturalDay'].includes(mode);
   }
 
   function populateForm(config) {
@@ -1054,6 +1061,7 @@
                   <option value="one">近1天</option>
                   <option value="seven">近7天</option>
                   <option value="thirty">近30天</option>
+                  <option value="naturalDay">自然日（手动输入）</option>
                   <option value="custom">自定义日期</option>
                 </select>
               </div>
