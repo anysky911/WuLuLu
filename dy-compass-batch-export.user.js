@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.3.8
+// @version      1.3.9
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.3.8';
+  const SCRIPT_VERSION = '1.3.9';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -241,7 +241,12 @@
       const saved = GM_getValue(STORAGE_KEY, null);
       if (!saved) return structuredClone(DEFAULT_CONFIG);
       const parsed = typeof saved === 'string' ? JSON.parse(saved) : saved;
-      return { ...structuredClone(DEFAULT_CONFIG), ...parsed };
+      // v1.3.9 将旧的“自定义日期”统一为“自然日”，避免两种日期范围模式混淆。
+      const migrated = {
+        ...parsed,
+        timeMode: parsed?.timeMode === 'custom' ? 'naturalDay' : parsed?.timeMode,
+      };
+      return { ...structuredClone(DEFAULT_CONFIG), ...migrated };
     } catch (error) {
       console.warn(`[${SCRIPT_NAME}] 读取配置失败`, error);
       return structuredClone(DEFAULT_CONFIG);
@@ -310,7 +315,7 @@
     if (!Number.isFinite(min) || !Number.isFinite(max)) throw new Error('价格必须是有效数字');
     if (min < 0 || max <= min) throw new Error('价格上限必须大于下限，且下限不能小于 0');
     if (['custom', 'naturalDay'].includes(config.timeMode)) {
-      if (!config.startDate || !config.endDate) throw new Error('自然日/自定义日期需要选择开始和结束日期');
+      if (!config.startDate || !config.endDate) throw new Error('自然日需要通过日历选择开始和结束日期');
       if (config.startDate > config.endDate) throw new Error('开始日期不能晚于结束日期');
     }
     if (config.loadTimeoutSec < 30 || config.loadTimeoutSec > 1800) throw new Error('加载超时应为 30–1800 秒');
@@ -947,7 +952,7 @@
   function updateCustomDateVisibility() {
     const mode = runtime.form?.elements.timeMode?.value;
     const row = runtime.shadow?.querySelector('.custom-date-row');
-    if (row) row.hidden = !['custom', 'naturalDay'].includes(mode);
+    if (row) row.hidden = mode !== 'naturalDay';
     updateSameDayDates();
   }
 
@@ -1046,7 +1051,7 @@
         .field > label { color:#4f5b70; }
         .row { display:flex; align-items:center; gap:7px; }
         input,select { width:100%; height:32px; border:1px solid #ccd5e5; border-radius:7px; padding:0 8px; color:#172033; background:#fff; outline:none; font:inherit; }
-        input[type="date"] { color-scheme:light; font-family:"Segoe UI","Microsoft YaHei",Arial,sans-serif; font-size:13px; font-weight:400; }
+        input[type="date"] { color-scheme:light; cursor:pointer; font-family:"Segoe UI","Microsoft YaHei",Arial,sans-serif; font-size:13px; font-weight:400; }
         input[type="date"]::-webkit-datetime-edit { font-family:"Segoe UI","Microsoft YaHei",Arial,sans-serif; font-weight:400; }
         input:focus,select:focus { border-color:#4771ff; box-shadow:0 0 0 2px rgba(71,113,255,.12); }
         input:disabled,select:disabled { color:#7b8495; background:#f3f5f8; }
@@ -1094,13 +1099,12 @@
                   <option value="one">近1天</option>
                   <option value="seven">近7天</option>
                   <option value="thirty">近30天</option>
-                  <option value="naturalDay">自然日（日期范围选择）</option>
-                  <option value="custom">自定义日期</option>
+                  <option value="naturalDay">自然日（通过日历选择）</option>
                 </select>
               </div>
               <div class="field custom-date-row" hidden>
                 <label>日期范围</label>
-                <div class="row"><input name="startDate" type="date"><span class="sep">至</span><input name="endDate" type="date"></div>
+                <div class="row"><input name="startDate" type="date" title="点击日历图标选择开始日期"><span class="sep">至</span><input name="endDate" type="date" title="点击日历图标选择结束日期"></div>
                 <label class="check same-day-check"><input type="checkbox" name="sameDay"><span>当天（开始与结束日期相同）</span></label>
               </div>
               <div class="field">
