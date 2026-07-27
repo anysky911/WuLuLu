@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.4.1
+// @version      1.4.2
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.4.1';
+  const SCRIPT_VERSION = '1.4.2';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -413,24 +413,21 @@
   }
 
   async function applyCustomDate(startDate, endDate, datePreset = null, allowInputFallback = true) {
-    if (datePreset) {
-      // 若用户的页面已经展开“更多”日历，重复点击会把弹层关闭，导致错误地等待“自然日”超时。
-      // 因此先直接寻找模式项；仅在日历未打开时才点击“更多”。
-      let preset = findExactText(datePreset);
-      if (!preset && !isDatePickerOpen()) {
-        const moreText = quickDateOption('more') || findExactText('更多');
-        if (!moreText) throw new Error('没有找到“更多”日期入口');
-        await safeClick(moreText, '更多日期');
-        await sleep(350);
-      }
-      preset = preset || await waitFor(() => findExactText(datePreset), `日期模式“${datePreset}”出现`, 8000);
-      await safeClick(preset.closest('label') || preset, `日期模式“${datePreset}”`);
-      await sleep(300);
-    } else if (!isDatePickerOpen()) {
+    // “自然日”在不同罗盘版本中有时是文字菜单项，有时直接就是展开后的日历。
+    // 日历本身才是稳定入口，不能把“自然日”文字出现作为成功条件。
+    let preset = datePreset ? findExactText(datePreset) : null;
+    if (!preset && !isDatePickerOpen()) {
       const moreText = quickDateOption('more') || findExactText('更多');
       if (!moreText) throw new Error('没有找到“更多”日期入口');
       await safeClick(moreText, '更多日期');
-      await sleep(350);
+      await waitFor(() => isDatePickerOpen() || Boolean(datePreset && findExactText(datePreset)), '日期日历面板显示', 8000);
+    }
+
+    // 若页面提供“自然日”菜单项就选择它；若没有该文字菜单，已打开的日历同样可直接选择范围。
+    preset = preset || (datePreset ? findExactText(datePreset) : null);
+    if (preset) {
+      await safeClick(preset.closest('label') || preset, `日期模式“${datePreset}”`);
+      await sleep(300);
     }
 
     let startCell = dateCell(startDate);
