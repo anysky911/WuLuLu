@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.4.2
+// @version      1.4.3
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.4.2';
+  const SCRIPT_VERSION = '1.4.3';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -382,6 +382,16 @@
     }
   }
 
+  function visibleDatePickerRoots() {
+    const selectors = [
+      '.ecom-dorami-date-picker-picker-wrapper',
+      '.ecom-dorami-date-picker-picker-main',
+      '[class*="date-picker-picker"]',
+      '[class*="calendar-panel"]',
+    ];
+    return [...document.querySelectorAll(selectors.join(','))].filter(isVisible);
+  }
+
   function dateCell(date) {
     const slashDate = date.replaceAll('-', '/');
     const selectors = [
@@ -390,8 +400,21 @@
       `[data-date="${CSS.escape(date)}"]`,
       `[data-value="${CSS.escape(date)}"]`,
     ];
-    return [...document.querySelectorAll(selectors.join(','))]
-      .find((element) => isVisible(element) && !/disabled/i.test(element.className || '')) || null;
+    const exactMatch = [...document.querySelectorAll(selectors.join(','))]
+      .find((element) => isVisible(element) && !/disabled/i.test(element.className || ''));
+    if (exactMatch) return exactMatch;
+
+    // 该页面部分日历版本没有 title/data-date 属性，日期仅是单独的日号文本。
+    // 只在已展开的日期面板中按日号匹配，避免误点排行榜中的数字。
+    const day = String(Number(date.slice(-2)));
+    for (const root of visibleDatePickerRoots()) {
+      const candidates = visibleElementsByExactText(day, root)
+        .map((element) => clickableTarget(element))
+        .filter((element, index, array) => element && array.indexOf(element) === index)
+        .filter((element) => isVisible(element) && !isDisabled(element));
+      if (candidates.length) return candidates[0];
+    }
+    return null;
   }
 
   function visibleDateInputs() {
@@ -403,13 +426,7 @@
   }
 
   function isDatePickerOpen() {
-    const selectors = [
-      '.ecom-dorami-date-picker-picker-wrapper',
-      '.ecom-dorami-date-picker-picker-main',
-      '[class*="date-picker-picker"]',
-      '[class*="calendar-panel"]',
-    ];
-    return [...document.querySelectorAll(selectors.join(','))].some(isVisible);
+    return visibleDatePickerRoots().length > 0;
   }
 
   async function applyCustomDate(startDate, endDate, datePreset = null, allowInputFallback = true) {
