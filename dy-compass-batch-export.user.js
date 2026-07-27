@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抖罗｜商榜批量导出助手
 // @namespace    codex.douyin.compass
-// @version      1.4.0
+// @version      1.4.1
 // @description  先应用筛选设置；导出弹窗默认关闭加载全部，首屏完成后再加载全部并导出。
 // @author       Codex
 // @match        https://compass.jinritemai.com/shop/chance/rank-product*
@@ -17,7 +17,7 @@
   'use strict';
 
   const SCRIPT_NAME = '罗盘榜单批量导出';
-  const SCRIPT_VERSION = '1.4.0';
+  const SCRIPT_VERSION = '1.4.1';
   const HOST_ID = 'codex-compass-export-host';
   const STORAGE_KEY = 'codex_compass_export_config_v1';
   // “加载全部”在部分页面版本中会先异步写入扩展缓存，导出按钮却会立即可用。
@@ -402,16 +402,35 @@
     });
   }
 
-  async function applyCustomDate(startDate, endDate, datePreset = null, allowInputFallback = true) {
-    const moreText = quickDateOption('more') || findExactText('更多');
-    if (!moreText) throw new Error('没有找到“更多”日期入口');
-    await safeClick(moreText, '更多日期');
-    await sleep(500);
+  function isDatePickerOpen() {
+    const selectors = [
+      '.ecom-dorami-date-picker-picker-wrapper',
+      '.ecom-dorami-date-picker-picker-main',
+      '[class*="date-picker-picker"]',
+      '[class*="calendar-panel"]',
+    ];
+    return [...document.querySelectorAll(selectors.join(','))].some(isVisible);
+  }
 
+  async function applyCustomDate(startDate, endDate, datePreset = null, allowInputFallback = true) {
     if (datePreset) {
-      const preset = await waitFor(() => findExactText(datePreset), `日期模式“${datePreset}”出现`, 8000);
+      // 若用户的页面已经展开“更多”日历，重复点击会把弹层关闭，导致错误地等待“自然日”超时。
+      // 因此先直接寻找模式项；仅在日历未打开时才点击“更多”。
+      let preset = findExactText(datePreset);
+      if (!preset && !isDatePickerOpen()) {
+        const moreText = quickDateOption('more') || findExactText('更多');
+        if (!moreText) throw new Error('没有找到“更多”日期入口');
+        await safeClick(moreText, '更多日期');
+        await sleep(350);
+      }
+      preset = preset || await waitFor(() => findExactText(datePreset), `日期模式“${datePreset}”出现`, 8000);
       await safeClick(preset.closest('label') || preset, `日期模式“${datePreset}”`);
       await sleep(300);
+    } else if (!isDatePickerOpen()) {
+      const moreText = quickDateOption('more') || findExactText('更多');
+      if (!moreText) throw new Error('没有找到“更多”日期入口');
+      await safeClick(moreText, '更多日期');
+      await sleep(350);
     }
 
     let startCell = dateCell(startDate);
