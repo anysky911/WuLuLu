@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         taobao-download
+// @name         TBD
 // @namespace    http://tampermonkey.net/
 // @version      2026-07-27
 // @description  try to take over the world!
@@ -14,13 +14,34 @@
 // @match        *://ikarnow.tmall.com/*
 // @match        *://moonkids.tmall.com/*
 // @match        *://hanhanxiang.tmall.com/*
-// @match        *://ovemy.tmall.com/shop/*
+// @match        *://ovemy.tmall.com/*
 // @match        *://xiaozhubite.tmall.com/*
 // @match        *://rinagugu.tmall.com/*
 // @match        *://mcticco.tmall.com/*
 // @match        *://amencl.tmall.com/*
 // @match        *://timmama.tmall.com/*
+// @match        *://xbdkids.taobao.com/*
+// @match        *://fanny-ann.taobao.com/*
+// @match        *://shop105083648.taobao.com/*
+// @match        *://natunakids.taobao.com/*
+// @match        *://naiyoucream.taobao.com/*
 // @match        *://moodytiger.tmall.com/*
+// @match        *://shop61135432.taobao.com/*
+// @match        *://youlanmuying.tmall.com/*
+// @match        *://hope5746.taobao.com/*
+// @match        *://naiyoucream.taobao.com/*
+// @match        *://yoyoone.tmall.com/*
+// @match        *://zhenyoufantongzhuang.tmall.com/*
+// @match        *://q21my.tmall.com/*
+// @match        *://xiaohubaoer.tmall.com/*
+// @match        *://chopiyopi.tmall.com/*
+// @match        *://claragirls.tmall.com/*
+// @match        *://ellekids.tmall.com/*
+// @match        *://littlenaive.tmall.com/*
+// @match        *://opennunu.tmall.com/*
+// @match        *://zhilechengzhangjitongzhuang.tmall.com/*
+// @match        *://yuanyuangongzhu.tmall.com/*
+// @match        *://detail.tmall.com/*
 // @grant        GM_download
 // @run-at       document-start
 // @grant        unsafeWindow
