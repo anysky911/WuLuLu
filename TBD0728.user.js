@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TBD0728
 // @namespace    http://tampermonkey.net/
-// @version      V01.1
+// @version      V01.2
 // @description  try to take over the world!
 // @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/TBD0728.user.js
 // @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/TBD0728.user.js
@@ -301,7 +301,8 @@
         if (!cells || cells.length === 0) return;
 
         let text = "ID,店铺,图片,链接,销量,日期,价格\n";
-        let nowDate = getFormattedDate();
+        // 以文本公式导出，WPS/Excel 显示为 2026/07/29，不会变成 #######。
+        let nowDate = `="${getFormattedDate()}"`;
         let fileDate = getCustomDate();
         const priceReg = /discntPrice[:：]\s*(\d+\.?\d*)/;
         let nameIndex = 1;
@@ -378,7 +379,8 @@
         if (!cells || cells.length === 0) return;
 
         let text = "ID,店铺,图片,链接,销量,日期,价格\n";
-        let nowDate = getFormattedDate();
+        // 以文本公式导出，WPS/Excel 显示为 2026/07/29，不会变成 #######。
+        let nowDate = `="${getFormattedDate()}"`;
         let fileDate = getCustomDate();
         let nameIndex = 1;
 
