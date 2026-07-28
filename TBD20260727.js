@@ -1,9 +1,11 @@
 // ==UserScript==
-// @name         TBD
-// @namespace    http://tampermonkey.net/
-// @version      2026-07-27
+// @name         TBD20260727
+// @namespace    https://github.com/anysky911/WuLuLu
+// @version      2026.07.28
 // @description  try to take over the world!
 // @author       deycoesr@gmail.com
+// @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/TBD20260727.js
+// @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/TBD20260727.js
 // @match        *://zuoxitz.tmall.com/*
 // @match        *://banduxian.tmall.com/*
 // @match        *://onmygame.tmall.com/*
