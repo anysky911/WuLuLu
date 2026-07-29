@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.5
+// @version      1.0.6
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.5';
+    const VERSION = '1.0.6';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1182,8 +1182,24 @@
             clickElement(moreTrigger, '展开“更多”时间菜单');
             menuOption = await tryWaitFor(
                 () => getNaturalDayMenuOption(),
-                {description: '“更多”菜单中的自然日选项', timeoutMs: 2200}
+                {description: '“更多”菜单中的自然日选项', timeoutMs: 1600}
             );
+            if (!menuOption) {
+                if (!isVisible(moreTrigger) || isDisabled(moreTrigger) || isDisabled(radio)) {
+                    throw new Error(
+                        `“更多”时间菜单无法展开：外层控件不可见或已禁用（${describeElement(moreTrigger)}）`
+                    );
+                }
+                moreTrigger.scrollIntoView({block: 'center', inline: 'center'});
+                radio.focus?.({preventScroll: true});
+                // Aurora/ecom 的二级菜单事件可能绑定在内部 input 上；
+                // 原生 click 会向 React 正常冒泡，且不传隔离环境 window。
+                radio.click();
+                menuOption = await tryWaitFor(
+                    () => getNaturalDayMenuOption(),
+                    {description: '内部 radio 点击后的自然日菜单项', timeoutMs: 1800}
+                );
+            }
             if (menuOption) {
                 log('已展开“更多”时间菜单并定位到“自然日”。');
             }
