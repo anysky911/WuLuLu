@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.2
+// @version      1.0.3
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.2';
+    const VERSION = '1.0.3';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -261,9 +261,36 @@
                     min-height: 34px; padding: 6px 8px; color: #334155; background: #f8fafc;
                     border: 1px solid #d6dfeb; border-radius: 7px; cursor: pointer; user-select: none;
                 }
+                #${PANEL_ID} .lp-radio-option {
+                    min-height: 34px; padding: 6px 8px; color: #334155; background: #f8fafc;
+                    border: 1px solid #d6dfeb; border-radius: 7px; cursor: pointer; user-select: none;
+                }
                 #${PANEL_ID} .lp-check-option:has(input[type="checkbox"]:checked) {
                     color: #124fc7; background: #edf4ff; border-color: #80aaff; font-weight: 700;
                     box-shadow: inset 0 0 0 1px rgba(22, 100, 255, .08);
+                }
+                #${PANEL_ID} .lp-radio-option:has(input[type="radio"]:checked) {
+                    color: #124fc7; background: #edf4ff; border-color: #80aaff; font-weight: 700;
+                    box-shadow: inset 0 0 0 1px rgba(22, 100, 255, .08);
+                }
+                #${PANEL_ID} input[type="radio"] {
+                    appearance: none !important; -webkit-appearance: none !important;
+                    position: relative !important; display: inline-grid !important; place-content: center;
+                    flex: 0 0 18px; width: 18px !important; height: 18px !important; margin: 0 2px 0 0 !important;
+                    opacity: 1 !important; visibility: visible !important;
+                    background: #fff !important; border: 2px solid #8da0ba !important; border-radius: 50% !important;
+                    cursor: pointer;
+                }
+                #${PANEL_ID} input[type="radio"]::after {
+                    content: ""; width: 8px; height: 8px; background: #fff; border-radius: 50%;
+                    transform: scale(0); transition: transform .08s ease;
+                }
+                #${PANEL_ID} input[type="radio"]:checked {
+                    background: var(--lp-blue) !important; border-color: var(--lp-blue) !important;
+                }
+                #${PANEL_ID} input[type="radio"]:checked::after { transform: scale(1); }
+                #${PANEL_ID} input[type="radio"]:focus-visible {
+                    outline: 3px solid rgba(22, 100, 255, .25); outline-offset: 2px;
                 }
                 #${PANEL_ID} input[type="checkbox"] {
                     appearance: none !important; -webkit-appearance: none !important;
@@ -334,10 +361,10 @@
                 <fieldset>
                     <legend>时间</legend>
                     <div class="lp-grid-4">
-                        <label><input type="radio" name="lp-time" value="one">近1天</label>
-                        <label><input type="radio" name="lp-time" value="seven">近7天</label>
-                        <label><input type="radio" name="lp-time" value="thirty">近30天</label>
-                        <label><input type="radio" name="lp-time" value="natural">自然日</label>
+                        <label class="lp-radio-option"><input type="radio" name="lp-time" value="one">近1天</label>
+                        <label class="lp-radio-option"><input type="radio" name="lp-time" value="seven">近7天</label>
+                        <label class="lp-radio-option"><input type="radio" name="lp-time" value="thirty">近30天</label>
+                        <label class="lp-radio-option"><input type="radio" name="lp-time" value="natural">自然日</label>
                     </div>
                     <div class="lp-dates">
                         <div class="lp-stack">
@@ -1006,6 +1033,9 @@
             '.ecom-date-picker-panel-container',
             '.ecom-picker-panel-container',
             '.ecom-date-picker-dropdown',
+            '.aurora-picker-panel-container',
+            '.aurora-picker-dropdown',
+            '.aurora-date-picker-dropdown',
             '[data-testid*="calendar" i]',
             '[data-testid*="date-picker" i]',
             '[class*="calendar"][class*="popup"]',
@@ -1022,7 +1052,67 @@
                 if (stableDateCell) return true;
                 const hasTableCell = Boolean(root.querySelector('td'));
                 return hasTableCell && getDisplayedMonths(root).length > 0;
-            });
+            })
+            .filter((root, index, roots) =>
+                !roots.some((child, childIndex) => childIndex !== index && root.contains(child))
+            );
+    }
+
+    function calendarRootFingerprint(root) {
+        if (!root || !root.isConnected || !isVisible(root)) return '';
+        const months = getDisplayedMonths(root)
+            .map((item) => `${item.year}-${String(item.month).padStart(2, '0')}`)
+            .join('|');
+        const cells = root.querySelectorAll(
+            '[data-date], [data-day], [datetime], [class*="calendar-cell"], [class*="picker-cell"], [class*="date-cell"], [role="gridcell"], td'
+        );
+        const dateSignals = Array.from(cells).slice(0, 8).map((cell) =>
+            normalizeText([
+                cell.getAttribute('title'),
+                cell.getAttribute('data-date'),
+                cell.getAttribute('data-value'),
+                cell.getAttribute('aria-label'),
+                cell.textContent,
+            ].filter(Boolean).join(' '))
+        ).join('|');
+        return `${months}#${cells.length}#${dateSignals}`;
+    }
+
+    async function waitForStableCalendar(description, timeoutMs = 3500) {
+        const started = Date.now();
+        let lastFingerprint = '';
+        let stableSince = 0;
+        let lastReason = '尚未检测到日期日历';
+
+        while (Date.now() - started <= timeoutMs) {
+            assertRunning();
+            const root = getCalendarRoots()[0];
+            const fingerprint = calendarRootFingerprint(root);
+            if (!root || !fingerprint) {
+                lastFingerprint = '';
+                stableSince = 0;
+                lastReason = '没有可见且包含日期格的稳定日历容器';
+            } else if (fingerprint !== lastFingerprint) {
+                lastFingerprint = fingerprint;
+                stableSince = Date.now();
+                lastReason = '日历刚出现或日期格仍在重绘';
+            } else if (Date.now() - stableSince >= 600) {
+                return root;
+            } else {
+                lastReason = `日历已连续稳定 ${((Date.now() - stableSince) / 1000).toFixed(1)} 秒`;
+            }
+            await delay(120);
+        }
+        throw new Error(`等待「${description}」超时（已等待 ${(timeoutMs / 1000).toFixed(1)} 秒）；最后一次检测：${lastReason}`);
+    }
+
+    async function tryWaitForStableCalendar(description, timeoutMs) {
+        try {
+            return await waitForStableCalendar(description, timeoutMs);
+        } catch (error) {
+            if (error instanceof TaskStoppedError) throw error;
+            return null;
+        }
     }
 
     function getDateTriggerNearTime(radio) {
@@ -1071,13 +1161,19 @@
     }
 
     async function openNaturalDateCalendar(radio) {
-        const alreadyOpen = getCalendarRoots()[0];
-        if (alreadyOpen) return alreadyOpen;
-
-        const direct = await tryWaitFor(
-            () => getCalendarRoots()[0],
-            {description: '“更多”直接展示的日期日历', timeoutMs: 1500}
+        const alreadyOpen = await tryWaitFor(
+            () => {
+                const root = getCalendarRoots()[0];
+                return root && calendarRootFingerprint(root) ? root : null;
+            },
+            {description: '已打开的日期日历', timeoutMs: 500}
         );
+        if (alreadyOpen) {
+            const stableOpen = await tryWaitForStableCalendar('已打开的日期日历稳定', 1800);
+            if (stableOpen) return stableOpen;
+        }
+
+        const direct = await tryWaitForStableCalendar('“更多”直接展示的日期日历稳定', 1800);
         if (direct) return direct;
 
         const menuOption = getNaturalDayMenuOption();
@@ -1100,12 +1196,7 @@
             }
         }
 
-        return waitFor(
-            () => getCalendarRoots()[0] || {
-                reason: '未发现可见日期容器（已检查 ecom picker、calendar/date-picker data 属性、role=dialog，且容器必须含日期格）',
-            },
-            {description: '罗盘自然日日期日历显示'}
-        );
+        return waitForStableCalendar('罗盘自然日日期日历稳定显示');
     }
 
     function dateRepresentations(isoDate) {
@@ -1238,8 +1329,15 @@
 
         for (let attempt = 0; attempt < 48; attempt += 1) {
             assertRunning();
-            const roots = getCalendarRoots();
+            let roots = getCalendarRoots();
             root = roots.includes(root) ? root : roots[0];
+            if (!root) {
+                const recovered = await tryWaitForStableCalendar(`${label}日期日历重绘后恢复`, 1800);
+                if (recovered) {
+                    roots = getCalendarRoots();
+                    root = roots.includes(recovered) ? recovered : roots[0];
+                }
+            }
             if (!root) {
                 if (typeof reopenCalendar === 'function' && reopenCount < 3) {
                     reopenCount += 1;
