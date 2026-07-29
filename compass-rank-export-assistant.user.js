@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.8
+// @version      1.0.9
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.8';
+    const VERSION = '1.0.9';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -807,6 +807,43 @@
         return element;
     }
 
+    function dispatchPageHover(element, description) {
+        if (!element) throw new Error(`${description}：DOM 元素不存在`);
+        if (!isVisible(element)) throw new Error(`${description}：元素存在但不可见（${describeElement(element)}）`);
+        if (isDisabled(element)) throw new Error(`${description}：元素处于禁用状态（${describeElement(element)}）`);
+        element.scrollIntoView({block: 'center', inline: 'center'});
+
+        const view = element.ownerDocument.defaultView;
+        const rect = element.getBoundingClientRect();
+        const common = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            relatedTarget: null,
+        };
+        if (typeof view.PointerEvent === 'function') {
+            element.dispatchEvent(new view.PointerEvent('pointerover', {
+                ...common,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+            }));
+            element.dispatchEvent(new view.PointerEvent('pointerenter', {
+                ...common,
+                bubbles: false,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+            }));
+        }
+        // React 的 onMouseEnter 由 mouseover/mouseout 事件系统合成；不设置 view。
+        element.dispatchEvent(new view.MouseEvent('mouseover', common));
+        element.dispatchEvent(new view.MouseEvent('mouseenter', {...common, bubbles: false}));
+        return element;
+    }
+
     function describeElement(element) {
         if (!element) return 'null';
         const tag = element.tagName?.toLowerCase() || 'unknown';
@@ -1222,6 +1259,20 @@
         if (direct) return direct;
 
         let menuOption = getNaturalDayMenuOption();
+        if (!menuOption) {
+            const moreTrigger = radio.closest('label')
+                || radio.closest('[role="radio"]')
+                || radio.closest('.ecom-radio-button')
+                || radio;
+            dispatchPageHover(moreTrigger, '悬停展开“更多”时间菜单');
+            menuOption = await tryWaitFor(
+                () => getNaturalDayMenuOption(),
+                {description: '悬停“更多”后的自然日菜单项', timeoutMs: 1800}
+            );
+            if (menuOption) {
+                log('已通过悬停展开“更多”时间菜单并定位到“自然日”。');
+            }
+        }
         if (!menuOption) {
             const moreTrigger = radio.closest('label')
                 || radio.closest('[role="radio"]')
