@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.6
+// @version      1.0.7
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.6';
+    const VERSION = '1.0.7';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -765,6 +765,48 @@
         return target;
     }
 
+    function dispatchPageActivationSequence(element, description) {
+        if (!element) throw new Error(`${description}：DOM 元素不存在`);
+        if (!isVisible(element)) throw new Error(`${description}：元素存在但不可见（${describeElement(element)}）`);
+        if (isDisabled(element)) throw new Error(`${description}：元素处于禁用状态（${describeElement(element)}）`);
+        element.scrollIntoView({block: 'center', inline: 'center'});
+        element.focus?.({preventScroll: true});
+
+        const view = element.ownerDocument.defaultView;
+        const rect = element.getBoundingClientRect();
+        const common = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: rect.left + rect.width / 2,
+            clientY: rect.top + rect.height / 2,
+            button: 0,
+        };
+        if (typeof view.PointerEvent === 'function') {
+            element.dispatchEvent(new view.PointerEvent('pointerdown', {
+                ...common,
+                buttons: 1,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+            }));
+        }
+        // 不设置 MouseEvent.view，避免把用户脚本隔离环境 window 传给 React。
+        element.dispatchEvent(new view.MouseEvent('mousedown', {...common, buttons: 1}));
+        if (typeof view.PointerEvent === 'function') {
+            element.dispatchEvent(new view.PointerEvent('pointerup', {
+                ...common,
+                buttons: 0,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+            }));
+        }
+        element.dispatchEvent(new view.MouseEvent('mouseup', {...common, buttons: 0}));
+        element.click();
+        return element;
+    }
+
     function describeElement(element) {
         if (!element) return 'null';
         const tag = element.tagName?.toLowerCase() || 'unknown';
@@ -1199,6 +1241,24 @@
                     () => getNaturalDayMenuOption(),
                     {description: '内部 radio 点击后的自然日菜单项', timeoutMs: 1800}
                 );
+            }
+            if (!menuOption) {
+                const eventTargets = [
+                    moreTrigger,
+                    moreTrigger.querySelector?.(
+                        '.ecom-radio-button-label, [class*="radio-button-label"], [class*="radio-label"], span'
+                    ),
+                ].filter((element, index, array) =>
+                    element && array.indexOf(element) === index && isVisible(element) && !isDisabled(element)
+                );
+                for (const target of eventTargets) {
+                    dispatchPageActivationSequence(target, '通过完整事件序列展开“更多”时间菜单');
+                    menuOption = await tryWaitFor(
+                        () => getNaturalDayMenuOption(),
+                        {description: '完整点击事件后的自然日菜单项', timeoutMs: 1200}
+                    );
+                    if (menuOption) break;
+                }
             }
             if (menuOption) {
                 log('已展开“更多”时间菜单并定位到“自然日”。');
