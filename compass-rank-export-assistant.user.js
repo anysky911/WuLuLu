@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.7
+// @version      1.0.8
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.7';
+    const VERSION = '1.0.8';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1045,7 +1045,10 @@
             },
             {description: `时间选项 value="${pageValue}"`}
         );
-        const clickable = radio.closest('label, .ecom-radio-button, [role="radio"]') || radio;
+        const clickable = radio.closest('label')
+            || radio.closest('[role="radio"]')
+            || radio.closest('.ecom-radio-button')
+            || radio;
         if (!isActiveControl(radio) && !isActiveControl(clickable)) {
             clickElement(clickable, `选择时间 ${mode}`);
             await waitFor(
@@ -1220,7 +1223,10 @@
 
         let menuOption = getNaturalDayMenuOption();
         if (!menuOption) {
-            const moreTrigger = radio.closest('label, .ecom-radio-button, [role="radio"]') || radio;
+            const moreTrigger = radio.closest('label')
+                || radio.closest('[role="radio"]')
+                || radio.closest('.ecom-radio-button')
+                || radio;
             clickElement(moreTrigger, '展开“更多”时间菜单');
             menuOption = await tryWaitFor(
                 () => getNaturalDayMenuOption(),
