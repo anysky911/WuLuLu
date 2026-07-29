@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.11
+// @version      1.0.12
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.11';
+    const VERSION = '1.0.12';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -756,9 +756,9 @@
     function clickElement(element, description, {scroll = true} = {}) {
         const target = closestClickable(element);
         if (!target) throw new Error(`${description}：DOM 元素不存在`);
+        if (scroll) target.scrollIntoView({block: 'center', inline: 'center'});
         if (!isVisible(target)) throw new Error(`${description}：元素存在但不可见（${describeElement(target)}）`);
         if (isDisabled(target)) throw new Error(`${description}：元素处于禁用状态（${describeElement(target)}）`);
-        if (scroll) target.scrollIntoView({block: 'center', inline: 'center'});
         target.focus?.({preventScroll: true});
         // 使用页面元素的原生 click，不构造带隔离环境 view 的 MouseEvent。
         target.click();
@@ -771,9 +771,9 @@
         {scroll = true, focus = true} = {}
     ) {
         if (!element) throw new Error(`${description}：DOM 元素不存在`);
+        if (scroll) element.scrollIntoView({block: 'center', inline: 'center'});
         if (!isVisible(element)) throw new Error(`${description}：元素存在但不可见（${describeElement(element)}）`);
         if (isDisabled(element)) throw new Error(`${description}：元素处于禁用状态（${describeElement(element)}）`);
-        if (scroll) element.scrollIntoView({block: 'center', inline: 'center'});
         if (focus) element.focus?.({preventScroll: true});
 
         const view = element.ownerDocument.defaultView;
@@ -813,9 +813,9 @@
 
     function dispatchPageHover(element, description, {scroll = true} = {}) {
         if (!element) throw new Error(`${description}：DOM 元素不存在`);
+        if (scroll) element.scrollIntoView({block: 'center', inline: 'center'});
         if (!isVisible(element)) throw new Error(`${description}：元素存在但不可见（${describeElement(element)}）`);
         if (isDisabled(element)) throw new Error(`${description}：元素处于禁用状态（${describeElement(element)}）`);
-        if (scroll) element.scrollIntoView({block: 'center', inline: 'center'});
 
         const view = element.ownerDocument.defaultView;
         const rect = element.getBoundingClientRect();
