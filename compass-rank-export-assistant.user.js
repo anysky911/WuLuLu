@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.9
+// @version      1.0.10
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.9';
+    const VERSION = '1.0.10';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -765,12 +765,16 @@
         return target;
     }
 
-    function dispatchPageActivationSequence(element, description) {
+    function dispatchPageActivationSequence(
+        element,
+        description,
+        {scroll = true, focus = true} = {}
+    ) {
         if (!element) throw new Error(`${description}：DOM 元素不存在`);
         if (!isVisible(element)) throw new Error(`${description}：元素存在但不可见（${describeElement(element)}）`);
         if (isDisabled(element)) throw new Error(`${description}：元素处于禁用状态（${describeElement(element)}）`);
-        element.scrollIntoView({block: 'center', inline: 'center'});
-        element.focus?.({preventScroll: true});
+        if (scroll) element.scrollIntoView({block: 'center', inline: 'center'});
+        if (focus) element.focus?.({preventScroll: true});
 
         const view = element.ownerDocument.defaultView;
         const rect = element.getBoundingClientRect();
@@ -807,11 +811,11 @@
         return element;
     }
 
-    function dispatchPageHover(element, description) {
+    function dispatchPageHover(element, description, {scroll = true} = {}) {
         if (!element) throw new Error(`${description}：DOM 元素不存在`);
         if (!isVisible(element)) throw new Error(`${description}：元素存在但不可见（${describeElement(element)}）`);
         if (isDisabled(element)) throw new Error(`${description}：元素处于禁用状态（${describeElement(element)}）`);
-        element.scrollIntoView({block: 'center', inline: 'center'});
+        if (scroll) element.scrollIntoView({block: 'center', inline: 'center'});
 
         const view = element.ownerDocument.defaultView;
         const rect = element.getBoundingClientRect();
@@ -1115,9 +1119,12 @@
             '.ecom-date-picker-panel-container',
             '.ecom-picker-panel-container',
             '.ecom-date-picker-dropdown',
+            '.ecom-dorami-date-picker-panel-with-border',
+            '.ecom-dorami-date-picker-show-more-dropdown-panel-wrapper',
             '.aurora-picker-panel-container',
             '.aurora-picker-dropdown',
             '.aurora-date-picker-dropdown',
+            '[class*="ecom-dorami-date-picker"][class*="panel"]',
             '[data-testid*="calendar" i]',
             '[data-testid*="date-picker" i]',
             '[class*="calendar"][class*="popup"]',
@@ -1323,7 +1330,12 @@
         }
 
         if (menuOption) {
-            clickElement(menuOption, '选择自然日菜单项');
+            dispatchPageHover(menuOption, '悬停自然日菜单项', {scroll: false});
+            dispatchPageActivationSequence(
+                menuOption,
+                '选择自然日菜单项',
+                {scroll: false, focus: false}
+            );
         } else {
             const trigger = getDateTriggerNearTime(radio);
             if (!trigger) {
@@ -1337,7 +1349,12 @@
                 {description: '自然日菜单项', timeoutMs: 1600}
             );
             if (optionAfterOpen && !getCalendarRoots()[0]) {
-                clickElement(optionAfterOpen, '选择自然日菜单项');
+                dispatchPageHover(optionAfterOpen, '悬停自然日菜单项', {scroll: false});
+                dispatchPageActivationSequence(
+                    optionAfterOpen,
+                    '选择自然日菜单项',
+                    {scroll: false, focus: false}
+                );
             }
         }
 
