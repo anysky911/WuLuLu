@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.0
+// @version      1.0.2
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.2';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -257,11 +257,39 @@
                 #${PANEL_ID} .lp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
                 #${PANEL_ID} .lp-grid-4 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
                 #${PANEL_ID} label { display: flex; align-items: center; gap: 5px; min-width: 0; }
+                #${PANEL_ID} .lp-check-option {
+                    min-height: 34px; padding: 6px 8px; color: #334155; background: #f8fafc;
+                    border: 1px solid #d6dfeb; border-radius: 7px; cursor: pointer; user-select: none;
+                }
+                #${PANEL_ID} .lp-check-option:has(input[type="checkbox"]:checked) {
+                    color: #124fc7; background: #edf4ff; border-color: #80aaff; font-weight: 700;
+                    box-shadow: inset 0 0 0 1px rgba(22, 100, 255, .08);
+                }
+                #${PANEL_ID} input[type="checkbox"] {
+                    appearance: none !important; -webkit-appearance: none !important;
+                    position: relative !important; display: inline-grid !important; place-content: center;
+                    flex: 0 0 18px; width: 18px !important; height: 18px !important; margin: 0 2px 0 0 !important;
+                    opacity: 1 !important; visibility: visible !important;
+                    background: #fff !important; border: 2px solid #8da0ba !important; border-radius: 5px !important;
+                    cursor: pointer;
+                }
+                #${PANEL_ID} input[type="checkbox"]::after {
+                    content: "✓"; color: #fff; font: 800 14px/1 sans-serif;
+                    transform: scale(0); transition: transform .08s ease;
+                }
+                #${PANEL_ID} input[type="checkbox"]:checked {
+                    background: var(--lp-blue) !important; border-color: var(--lp-blue) !important;
+                }
+                #${PANEL_ID} input[type="checkbox"]:checked::after { transform: scale(1); }
+                #${PANEL_ID} input[type="checkbox"]:focus-visible {
+                    outline: 3px solid rgba(22, 100, 255, .25); outline-offset: 2px;
+                }
                 #${PANEL_ID} .lp-stack { display: grid; gap: 6px; }
                 #${PANEL_ID} .lp-field { display: grid; grid-template-columns: 68px 1fr; align-items: center; gap: 6px; }
                 #${PANEL_ID} input[type="text"],
                 #${PANEL_ID} input[type="number"],
-                #${PANEL_ID} input[type="date"] {
+                #${PANEL_ID} input[type="date"],
+                #${PANEL_ID} select {
                     width: 100%; min-width: 0; height: 30px; padding: 4px 7px;
                     color: #1e293b; background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
                 }
@@ -315,7 +343,7 @@
                         <div class="lp-stack">
                             <label class="lp-field"><span>开始日期</span><input type="date" data-setting="startDate"></label>
                             <label class="lp-field"><span>结束日期</span><input type="date" data-setting="endDate"></label>
-                            <label><input type="checkbox" data-setting="sameDay">当天（开始与结束日期相同）</label>
+                            <label class="lp-check-option"><input type="checkbox" data-setting="sameDay">当天（开始与结束日期相同）</label>
                         </div>
                         <p class="lp-tip">罗盘通常不提供今天的完整榜单数据，日期最大为昨天。</p>
                     </div>
@@ -330,6 +358,13 @@
                 <fieldset>
                     <legend>三级行业类目</legend>
                     <div class="lp-stack">
+                        <label class="lp-field">
+                            <span>快捷选项</span>
+                            <select data-category-preset>
+                                <option value="">自定义 / 不设置</option>
+                                <option value="服饰内衣|服装|童装">服饰内衣 / 服装 / 童装</option>
+                            </select>
+                        </label>
                         <label class="lp-field"><span>一级类目</span><input type="text" data-category="0" placeholder="如：服饰内衣"></label>
                         <label class="lp-field"><span>二级类目</span><input type="text" data-category="1" placeholder="输入完整名称"></label>
                         <label class="lp-field"><span>三级类目</span><input type="text" data-category="2" placeholder="输入完整名称"></label>
@@ -338,7 +373,7 @@
                 <fieldset>
                     <legend>榜单</legend>
                     <div class="lp-grid-4">
-                        ${RANKS.map((rank) => `<label><input type="checkbox" data-rank="${rank.id}">${rank.label}</label>`).join('')}
+                        ${RANKS.map((rank) => `<label class="lp-check-option"><input type="checkbox" data-rank="${rank.id}">${rank.label}</label>`).join('')}
                     </div>
                 </fieldset>
                 <fieldset>
@@ -380,6 +415,7 @@
         settings.categories.forEach((value, index) => {
             panel.querySelector(`[data-category="${index}"]`).value = value;
         });
+        updateCategoryPresetUI();
         RANKS.forEach((rank) => {
             panel.querySelector(`[data-rank="${rank.id}"]`).checked = Boolean(settings.ranks[rank.id]);
         });
@@ -411,9 +447,20 @@
 
     function handlePanelChange(event) {
         const target = event.target;
-        if (!(target instanceof HTMLInputElement)) return;
+        if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
 
-        if (target.name === 'lp-time') {
+        if (target.dataset.categoryPreset !== undefined) {
+            const categories = target.value ? target.value.split('|') : ['', '', ''];
+            state.settings.categories = categories;
+            categories.forEach((value, index) => {
+                state.panel.querySelector(`[data-category="${index}"]`).value = value;
+            });
+            log(
+                target.value
+                    ? `已选择行业类目快捷项：${categories.join(' / ')}。`
+                    : '已切换为自定义类目，可手动填写或全部留空。'
+            );
+        } else if (target.name === 'lp-time') {
             state.settings.timeMode = target.value;
             updateNaturalDateVisibility();
         } else if (target.dataset.setting === 'startDate') {
@@ -462,10 +509,18 @@
         } else if (target.dataset.category !== undefined) {
             state.settings.categories[Number(target.dataset.category)] = normalizeText(target.value);
             target.value = state.settings.categories[Number(target.dataset.category)];
+            updateCategoryPresetUI();
         } else if (target.dataset.rank) {
             state.settings.ranks[target.dataset.rank] = target.checked;
         }
         saveSettings();
+    }
+
+    function updateCategoryPresetUI() {
+        const preset = state.panel?.querySelector('[data-category-preset]');
+        if (!preset) return;
+        const path = state.settings.categories.join('|');
+        preset.value = Array.from(preset.options).some((option) => option.value === path) ? path : '';
     }
 
     function acceptDateChange(input, isStart) {
@@ -939,9 +994,10 @@
 
         log('已选择“更多”，准备使用罗盘页面日期日历设置自然日。');
         const calendar = await openNaturalDateCalendar(radio);
-        await selectDateFromCalendar(state.settings.startDate, calendar, '开始日期');
+        const reopenCalendar = () => openNaturalDateCalendar(radio);
+        await selectDateFromCalendar(state.settings.startDate, calendar, '开始日期', reopenCalendar);
         const secondCalendar = getCalendarRoots()[0] || await openNaturalDateCalendar(radio);
-        await selectDateFromCalendar(state.settings.endDate, secondCalendar, '结束日期');
+        await selectDateFromCalendar(state.settings.endDate, secondCalendar, '结束日期', reopenCalendar);
         log(`已在罗盘日历中选择 ${state.settings.startDate} 至 ${state.settings.endDate}。`, 'success');
     }
 
@@ -959,9 +1015,14 @@
         ].join(',');
         return queryVisibleAll(selectors)
             .filter((root) => !state.panel.contains(root))
-            .filter((root) => root.querySelector(
-                '[role="gridcell"], td, [data-date], [data-value], [class*="calendar-cell"], [class*="picker-cell"]'
-            ));
+            .filter((root) => {
+                const stableDateCell = root.querySelector(
+                    '[data-date], [data-day], [datetime], [class*="calendar-cell"], [class*="picker-cell"], [class*="date-cell"], [role="gridcell"]'
+                );
+                if (stableDateCell) return true;
+                const hasTableCell = Boolean(root.querySelector('td'));
+                return hasTableCell && getDisplayedMonths(root).length > 0;
+            });
     }
 
     function getDateTriggerNearTime(radio) {
@@ -1168,17 +1229,24 @@
         return null;
     }
 
-    async function selectDateFromCalendar(isoDate, initialRoot, label) {
+    async function selectDateFromCalendar(isoDate, initialRoot, label, reopenCalendar) {
         if (!isISODate(isoDate)) throw new Error(`${label} ${isoDate} 不是有效日期。`);
         const [targetYear, targetMonth, targetDay] = isoDate.split('-').map(Number);
         const targetMonthKey = monthKey(targetYear, targetMonth);
         let root = initialRoot;
+        let reopenCount = 0;
 
         for (let attempt = 0; attempt < 48; attempt += 1) {
             assertRunning();
             const roots = getCalendarRoots();
             root = roots.includes(root) ? root : roots[0];
             if (!root) {
+                if (typeof reopenCalendar === 'function' && reopenCount < 3) {
+                    reopenCount += 1;
+                    log(`${label}选择过程中日期日历被页面重绘关闭，正在自动重新打开（${reopenCount}/3）…`, 'warn');
+                    root = await reopenCalendar();
+                    continue;
+                }
                 throw new Error(`${label} ${isoDate} 定位失败：日期日历在选择过程中意外关闭。`);
             }
 
@@ -1300,6 +1368,20 @@
     }
 
     function findCategoryTrigger() {
+        const trackedAuroraCascader = queryVisibleAll(
+            '[data-btm="d189160"] .aurora-cascader, [data-btm="d189160"] [class*="aurora-cascader"]'
+        ).find((element) => !state.panel.contains(element));
+        if (trackedAuroraCascader) return trackedAuroraCascader;
+
+        const auroraCombobox = queryVisibleAll(
+            '.aurora-cascader [role="combobox"][aria-haspopup="listbox"], [class*="aurora-cascader"] [role="combobox"]'
+        ).find((element) => !state.panel.contains(element));
+        if (auroraCombobox) {
+            return auroraCombobox.closest('.aurora-cascader, [class*="aurora-cascader"]')
+                || auroraCombobox.closest('[class*="cascader"]')
+                || auroraCombobox;
+        }
+
         const stable = queryVisibleAll([
             '[data-field*="categor" i]',
             '[data-testid*="categor" i]',
@@ -1324,6 +1406,23 @@
             if (trigger) return trigger;
         }
         return null;
+    }
+
+    function getDisplayedCategoryPath(trigger = findCategoryTrigger()) {
+        if (!trigger) return '';
+        const root = trigger.matches?.('[class*="cascader"]')
+            ? trigger
+            : trigger.closest?.('[class*="cascader"]') || trigger.parentElement;
+        const valueNode = root?.querySelector(
+            '.aurora-select-content-value[title], [class*="select-content-value"][title], [class*="select-content-value"]'
+        );
+        return normalizeText(valueNode?.getAttribute('title') || valueNode?.textContent || '');
+    }
+
+    function categoryPathMatches(displayedPath, categories) {
+        const compactDisplayed = normalizeText(displayedPath).replace(/\s*\/\s*/g, '/');
+        const expected = categories.map(normalizeText).join('/');
+        return compactDisplayed === expected;
     }
 
     function getVisibleCategoryPopups() {
@@ -1373,6 +1472,12 @@
             },
             {description: '行业类目级联选择器'}
         );
+        const requestedPath = categories.join(' / ');
+        const currentPath = getDisplayedCategoryPath(trigger);
+        if (categoryPathMatches(currentPath, categories)) {
+            log(`行业类目已是：${requestedPath}，无需重复选择。`);
+            return;
+        }
         clickElement(trigger, '打开行业类目级联选择器');
         await waitFor(
             () => getVisibleCategoryPopups().length > 0 || {
@@ -1399,7 +1504,20 @@
                 );
             }
         }
-        log(`行业类目已设置：${categories.join(' > ')}。`, 'success');
+        await waitFor(
+            () => {
+                const displayedPath = getDisplayedCategoryPath();
+                return categoryPathMatches(displayedPath, categories)
+                    ? displayedPath
+                    : {
+                        reason: displayedPath
+                            ? `Aurora 级联选择器当前 title 为“${displayedPath}”，目标为“${requestedPath}”`
+                            : '尚未找到 .aurora-select-content-value[title] 或同类稳定路径显示节点',
+                    };
+            },
+            {description: `行业类目路径“${requestedPath}”生效`}
+        );
+        log(`行业类目已设置并验证：${requestedPath}。`, 'success');
     }
 
     function hasVisibleLoading(root) {
