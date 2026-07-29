@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.3
+// @version      1.0.4
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -1176,14 +1176,26 @@
         const direct = await tryWaitForStableCalendar('“更多”直接展示的日期日历稳定', 1800);
         if (direct) return direct;
 
-        const menuOption = getNaturalDayMenuOption();
+        let menuOption = getNaturalDayMenuOption();
+        if (!menuOption) {
+            const moreTrigger = radio.closest('label, .ecom-radio-button, [role="radio"]') || radio;
+            clickElement(moreTrigger, '展开“更多”时间菜单');
+            menuOption = await tryWaitFor(
+                () => getNaturalDayMenuOption(),
+                {description: '“更多”菜单中的自然日选项', timeoutMs: 2200}
+            );
+            if (menuOption) {
+                log('已展开“更多”时间菜单并定位到“自然日”。');
+            }
+        }
+
         if (menuOption) {
             clickElement(menuOption, '选择自然日菜单项');
         } else {
             const trigger = getDateTriggerNearTime(radio);
             if (!trigger) {
                 throw new Error(
-                    '自然日日期日历定位失败：选择 value="more" 后既未直接展示日历，也未找到自然日菜单或带 date/calendar/range 稳定特征的日期触发器。'
+                    '自然日日期日历定位失败：已再次点击 value="more" 展开二级菜单，但未找到自然日菜单项，也未找到带 date/calendar/range 稳定特征的日期触发器。'
                 );
             }
             clickElement(trigger, '打开罗盘自然日日期日历');
