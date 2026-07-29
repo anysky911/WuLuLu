@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.10
+// @version      1.0.11
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.10';
+    const VERSION = '1.0.11';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -753,12 +753,12 @@
             || element;
     }
 
-    function clickElement(element, description) {
+    function clickElement(element, description, {scroll = true} = {}) {
         const target = closestClickable(element);
         if (!target) throw new Error(`${description}：DOM 元素不存在`);
         if (!isVisible(target)) throw new Error(`${description}：元素存在但不可见（${describeElement(target)}）`);
         if (isDisabled(target)) throw new Error(`${description}：元素处于禁用状态（${describeElement(target)}）`);
-        target.scrollIntoView({block: 'center', inline: 'center'});
+        if (scroll) target.scrollIntoView({block: 'center', inline: 'center'});
         target.focus?.({preventScroll: true});
         // 使用页面元素的原生 click，不构造带隔离环境 view 的 MouseEvent。
         target.click();
@@ -1516,7 +1516,9 @@
                     if (isDateCellDisabled(exactCell)) {
                         throw new Error(`${label} ${isoDate} 的日期格存在但不可点击或已禁用（${describeElement(exactCell)}）。`);
                     }
-                    clickElement(exactCell, `选择${label} ${isoDate}`);
+                    // 日期面板通常渲染在 portal 中。对日期格调用 scrollIntoView
+                    // 会把整个罗盘页面横向挪走，使下一次“更多”控件离开视口。
+                    clickElement(exactCell, `选择${label} ${isoDate}`, {scroll: false});
                     log(`${label} ${isoDate}：通过完整日期属性定位并点击。`);
                     return;
                 }
@@ -1543,7 +1545,7 @@
                         `${label} ${isoDate} 定位失败：日历已显示 ${targetYear}年${targetMonth}月，但只在该日历容器内按日号仍找不到可点击的 ${targetDay} 日日期格。`
                     );
                 }
-                clickElement(fallbackCell, `选择${label} ${isoDate}`);
+                clickElement(fallbackCell, `选择${label} ${isoDate}`, {scroll: false});
                 log(`${label} ${isoDate}：在已确认年月的日历容器内按日号定位并点击。`);
                 return;
             }
