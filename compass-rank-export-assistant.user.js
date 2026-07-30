@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.19
+// @version      1.0.20
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.19';
+    const VERSION = '1.0.20';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1622,10 +1622,19 @@
     }
 
     function findCustomPriceButton() {
-        const exactCandidates = queryVisibleAll('button, [role="button"], a, [data-action], [data-testid]')
+        // 罗盘当前版本的价格“自定义”不是 button，而是 div.tagItem-xxx。
+        // 使用稳定的类名前缀，同时仍校验完整文字和价格带上下文。
+        const exactCandidates = queryVisibleAll([
+            '[class*="tagItem"]',
+            '[class*="tag-item"]',
+            'button',
+            '[role="button"]',
+            'a',
+            '[data-action]',
+            '[data-testid]',
+        ].join(','))
             .filter((element) => !state.panel.contains(element))
             .filter((element) => normalizeText(element.textContent) === '自定义')
-            .map(closestClickable)
             .filter((element, index, array) => element && array.indexOf(element) === index)
             .map((element) => {
                 const contextRoot = typeof element.closest === 'function'
@@ -1633,6 +1642,7 @@
                     : null;
                 const context = normalizeText(element.parentElement?.textContent || contextRoot?.textContent || '');
                 let score = 0;
+                if (/(tagItem|tag-item)/.test(String(element.className || ''))) score += 18;
                 if (/price|价格/.test(elementSignal(element))) score += 12;
                 if (/价格带|价格/.test(context)) score += 8;
                 if (element.hasAttribute('data-action') || element.hasAttribute('data-testid')) score += 3;
