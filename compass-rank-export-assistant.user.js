@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.18
+// @version      1.0.19
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.18';
+    const VERSION = '1.0.19';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1674,6 +1674,28 @@
             .filter((element, index, array) => element && !isDisabled(element) && array.indexOf(element) === index)[0] || null;
     }
 
+    async function clickCustomPriceButtonWithRetry() {
+        let lastReason = '尚未尝试点击';
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+            assertRunning();
+            const candidate = findCustomPriceButton();
+            if (!candidate) {
+                lastReason = '本次定位未找到可点击的“自定义”入口';
+            } else {
+                try {
+                    clickElement(candidate, '打开价格范围选择');
+                    return;
+                } catch (error) {
+                    lastReason = error instanceof Error ? error.message : String(error);
+                    if (!/DOM 元素不存在|不可见/.test(lastReason)) throw error;
+                    log(`价格带“自定义”节点在点击前被页面刷新替换，重新定位（${attempt}/3）…`, 'warn');
+                }
+            }
+            await sleep(POLL_INTERVAL * 2);
+        }
+        throw new Error(`打开价格范围选择失败：${lastReason}`);
+    }
+
     async function setPagePrice() {
         const values = [state.settings.minPrice, state.settings.maxPrice];
         if (!values[0] && !values[1]) {
@@ -1681,13 +1703,13 @@
             return;
         }
 
-        const customButton = await waitFor(
+        await waitFor(
             () => findCustomPriceButton() || {
                 reason: '未找到价格带中的“自定义”可点击控件；已检查 button/role=button/data-action/data-testid 及其价格带上下文',
             },
             {description: '价格带自定义入口'}
         );
-        clickElement(customButton, '打开价格范围选择');
+        await clickCustomPriceButtonWithRetry();
         const modal = await waitFor(
             () => findCustomPriceDialog() || {
                 reason: '点击价格带“自定义”后，未找到同时包含价格大于/价格小于输入框和“确定”按钮的可见弹窗',
