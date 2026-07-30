@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.14
+// @version      1.0.15
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.14';
+    const VERSION = '1.0.15';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1904,15 +1904,23 @@
             '[class*="dialog"]',
         ].join(','))
             .filter((element) => !state.panel.contains(element))
-            .filter((element, index, array) => !array.some((other, otherIndex) =>
-                otherIndex !== index && other.contains(element) && other.getBoundingClientRect().height < element.getBoundingClientRect().height
-            ));
+            .filter((element, index, array) => array.indexOf(element) === index);
+    }
+
+    function exportDialogScore(dialog) {
+        const signal = elementSignal(dialog);
+        let score = 0;
+        // 罗盘导出页中会嵌套“提示”等小对话框；必须优先选择同时承载表格、
+        // “加载全部”和“导出表格”的大容器。
+        if (/加载全部/.test(signal)) score += 36;
+        if (/导出表格/.test(signal)) score += 36;
+        if (dialog.querySelector('table, [role="table"], .ecom-table, [class*="data-table"]')) score += 12;
+        if (/export|download|导出|下载/.test(signal)) score += 8;
+        return score;
     }
 
     function dialogLooksLikeExport(dialog) {
-        const signal = elementSignal(dialog);
-        return /export|download|导出|下载/.test(signal)
-            || Boolean(dialog.querySelector('table, [role="table"], [role="switch"], input[type="checkbox"]'));
+        return exportDialogScore(dialog) > 0;
     }
 
     function toggleScore(element) {
@@ -1945,18 +1953,21 @@
         const label = queryVisibleAll('label, span, div', dialog)
             .find((element) => normalizeText(element.textContent) === '加载全部');
         if (!label) return null;
-        const row = label.closest('label') || label.parentElement;
-        const control = row?.querySelector([
+        const controlSelector = [
             '[role="switch"]',
             '[class*="switch"]',
             '[class*="toggle"]',
             'input[type="checkbox"]',
-        ].join(','));
-        if (!control) return null;
-        const clickable = control.closest('label, button, [role="switch"], [class*="switch"], [class*="toggle"]')
-            || control.parentElement
-            || control;
-        return isVisible(clickable) ? clickable : null;
+        ].join(',');
+        // “加载全部”文本与开关是相邻兄弟节点，逐层向上寻找同时包含开关的行容器。
+        for (let row = label.parentElement; row && row !== dialog.parentElement; row = row.parentElement) {
+            const control = row.querySelector(controlSelector);
+            if (!control) continue;
+            for (let target = control; target && target !== row.parentElement; target = target.parentElement) {
+                if (isVisible(target)) return target;
+            }
+        }
+        return null;
     }
 
     function isToggleOn(element) {
@@ -2019,10 +2030,13 @@
         const dialog = await waitFor(
             () => {
                 const dialogs = getVisibleDialogs();
-                const candidate = dialogs.find((item) => !beforeDialogs.has(item) && dialogLooksLikeExport(item))
-                    || dialogs.find(dialogLooksLikeExport);
+                const ranked = dialogs
+                    .filter(dialogLooksLikeExport)
+                    .map((item) => ({item, score: exportDialogScore(item), isNew: !beforeDialogs.has(item)}))
+                    .sort((a, b) => (b.isNew - a.isNew) || (b.score - a.score));
+                const candidate = ranked[0]?.item || null;
                 return candidate || {
-                    reason: '未发现真正可见且包含导出/download 特征、表格或加载开关的 role=dialog/ecom-modal',
+                    reason: '未发现真正可见且同时承载导出表格、加载全部开关或表格数据的 role=dialog/ecom-modal',
                 };
             },
             {description: `${rank.label}导出弹窗真正显示`}
