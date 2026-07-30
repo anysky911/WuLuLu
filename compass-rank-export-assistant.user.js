@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.22
+// @version      1.0.23
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.22';
+    const VERSION = '1.0.23';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1140,11 +1140,17 @@
             || radio;
         if (!isActiveControl(radio) && !isActiveControl(clickable)) {
             clickElement(clickable, `选择时间 ${mode}`);
-            await waitFor(
-                () => isActiveControl(radio) || isActiveControl(clickable)
-                    || {reason: `.ecom-radio-button-input[value="${pageValue}"] 尚未变为 checked/active`},
-                {description: `时间选项 ${pageValue} 选中`}
-            );
+            // “更多”在罗盘部分版本仅是日期菜单触发器：点击后不会立刻 checked，
+            // 必须由后续“日历真正打开 + 日期格选中”验证，而不能在这里误判超时。
+            if (mode !== 'natural') {
+                await waitFor(
+                    () => isActiveControl(radio) || isActiveControl(clickable)
+                        || {reason: `.ecom-radio-button-input[value="${pageValue}"] 尚未变为 checked/active`},
+                    {description: `时间选项 ${pageValue} 选中`}
+                );
+            } else {
+                log('“更多”已点击；该版本将以罗盘日期日历成功打开作为自然日切换验证。');
+            }
         }
 
         if (mode !== 'natural') {
