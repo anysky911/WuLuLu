@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.23
+// @version      1.0.24
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.23';
+    const VERSION = '1.0.24';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1708,6 +1708,8 @@
         const candidates = queryVisibleAll([
             '[role="dialog"]',
             '.ecom-modal',
+            '.ecom-modal-body',
+            '[class*="modal-body"]',
             '[data-testid*="modal" i]',
             '[class*="modal"][class*="content"]',
             '[class*="dialog"]',
@@ -1717,16 +1719,28 @@
                 const inputs = queryVisibleAll('input', element)
                     .filter((input) => input instanceof HTMLInputElement && !input.readOnly && !input.disabled);
                 const signal = elementSignal(element);
-                const hasConfirm = queryVisibleAll('button, [role="button"]', element)
-                    .some((button) => normalizeText(button.textContent) === '确定' && !isDisabled(button));
+                const hasMinInput = inputs.some((input) => input.matches('[role="spinbutton"][placeholder*="最小"], [placeholder*="min" i]'));
+                const hasMaxInput = inputs.some((input) => input.matches('[role="spinbutton"][placeholder*="最大"], [placeholder*="max" i]'));
+                // “确定”可能在 ecom-modal-body 之外的 footer，不能要求同一容器同时拥有它。
                 const score = (inputs.length >= 2 ? 10 : 0)
+                    + (hasMinInput ? 8 : 0)
+                    + (hasMaxInput ? 8 : 0)
                     + (/价格大于|价格小于|价格范围|price/.test(signal) ? 18 : 0)
-                    + (hasConfirm ? 6 : 0);
+                    + (element.matches('.ecom-modal-body, [class*="modal-body"]') ? 4 : 0);
                 return {element, inputs, score};
             })
-            .filter((item) => item.score >= 16)
+            .filter((item) => item.score >= 26)
             .sort((a, b) => b.score - a.score);
         return candidates[0] || null;
+    }
+
+    function findPriceModalRoot(element) {
+        for (let node = element; node && node !== document.body; node = node.parentElement) {
+            const hasConfirm = queryVisibleAll('button, [role="button"], [data-action], [data-testid]', node)
+                .some((button) => normalizeText(button.textContent) === '确定' && !isDisabled(button));
+            if (hasConfirm) return node;
+        }
+        return element;
     }
 
     function findPriceConfirmButton(dialog) {
@@ -1800,8 +1814,9 @@
                 {description: `${label}写入验证`, timeoutMs: 3000}
             );
         }
+        const priceModalRoot = findPriceModalRoot(modalElement);
         const confirmButton = await waitFor(
-            () => findPriceConfirmButton(modalElement) || {
+            () => findPriceConfirmButton(priceModalRoot) || {
                 reason: '价格范围弹窗内未找到可点击的“确定”按钮',
             },
             {description: '价格范围确定按钮'}
