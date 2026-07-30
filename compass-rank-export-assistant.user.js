@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.13
+// @version      1.0.14
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.13';
+    const VERSION = '1.0.14';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1860,16 +1860,19 @@
 
     function exportEntryScore(element) {
         const signal = elementSignal(element);
+        const text = normalizeText(element.textContent);
         let score = 0;
+        // 罗盘当前页面的主入口是“一键导出”，其外层不一定是 button。
+        if (text === '一键导出') score += 80;
         if (/(data-action|data-testid).*(export|download)|export|download/.test(signal)) score += 14;
-        if (/导出/.test(normalizeText(element.textContent))) score += 6;
+        if (/导出/.test(text)) score += 6;
         if (element.matches('button, [role="button"], a')) score += 4;
         if (isDisabled(element)) score -= 30;
         return score;
     }
 
     function findExportEntry() {
-        const candidates = queryVisibleAll([
+        const stableCandidates = queryVisibleAll([
             '[data-action*="export" i]',
             '[data-testid*="export" i]',
             '[aria-label*="export" i]',
@@ -1878,9 +1881,15 @@
             'button',
             'a',
             '[role="button"]',
-        ].join(','))
+        ].join(','));
+        // 兼容当前罗盘版本：入口由普通容器承载，只有内部文本“一键导出”。
+        // 这是稳定属性定位失败后的受限回退，不会在整个页面按泛“导出”文字误点。
+        const oneClickTextCandidates = queryVisibleAll('div, span')
+            .filter((element) => normalizeText(element.textContent) === '一键导出');
+        const candidates = [...stableCandidates, ...oneClickTextCandidates]
             .filter((element) => !state.panel.contains(element))
-            .filter((element) => /export|download|导出/i.test(elementSignal(element)))
+            .filter((element) => /export|download|导出/i.test(elementSignal(element))
+                || normalizeText(element.textContent) === '一键导出')
             .map(closestClickable)
             .filter((element, index, array) => element && array.indexOf(element) === index);
         return candidates.sort((a, b) => exportEntryScore(b) - exportEntryScore(a))[0] || null;
@@ -1930,11 +1939,30 @@
             .map((element) => ({element, score: toggleScore(element)}))
             .filter((item) => item.score > 4)
             .sort((a, b) => b.score - a.score);
-        return candidates[0]?.element || null;
+        if (candidates[0]?.element) return candidates[0].element;
+
+        // 实测罗盘导出页把开关渲染成可见容器 + 隐藏 checkbox；不能只找可见 input。
+        const label = queryVisibleAll('label, span, div', dialog)
+            .find((element) => normalizeText(element.textContent) === '加载全部');
+        if (!label) return null;
+        const row = label.closest('label') || label.parentElement;
+        const control = row?.querySelector([
+            '[role="switch"]',
+            '[class*="switch"]',
+            '[class*="toggle"]',
+            'input[type="checkbox"]',
+        ].join(','));
+        if (!control) return null;
+        const clickable = control.closest('label, button, [role="switch"], [class*="switch"], [class*="toggle"]')
+            || control.parentElement
+            || control;
+        return isVisible(clickable) ? clickable : null;
     }
 
     function isToggleOn(element) {
         if (element instanceof HTMLInputElement) return element.checked;
+        const nestedInput = element.querySelector?.('input[type="checkbox"]');
+        if (nestedInput instanceof HTMLInputElement) return nestedInput.checked;
         const target = closestClickable(element);
         const states = [
             element.getAttribute('aria-checked'),
@@ -1978,7 +2006,7 @@
     }
 
     async function exportCurrentRank(rank) {
-        log(`查找${rank.label}页面的导出入口…`);
+        log(`[导出 1/4] 查找并点击${rank.label}页面“一键导出”入口…`);
         const beforeDialogs = new Set(getVisibleDialogs());
         const entry = await waitFor(
             () => findExportEntry() || {
@@ -1999,12 +2027,12 @@
             },
             {description: `${rank.label}导出弹窗真正显示`}
         );
-        log(`${rank.label}导出弹窗已显示。`);
+        log(`[导出 2/4] ${rank.label}导出弹窗已显示。`);
 
         const toggle = findLoadAllToggle(dialog);
         if (toggle) {
             if (!isToggleOn(toggle)) {
-                log('检测到“加载全部”默认关闭，正在主动开启…');
+                log('[导出 3/4] 检测到“加载全部”默认关闭，正在主动开启…');
                 clickElement(toggle, '开启加载全部');
                 await waitFor(
                     () => isToggleOn(toggle)
@@ -2020,7 +2048,7 @@
             log('导出弹窗未呈现“加载全部”开关；该页面版本可能直接加载全部，将继续用表格稳定性检测确认。', 'warn');
         }
 
-        log('等待导出弹窗加载全部及表格稳定…');
+        log('[导出 3/4] 等待“加载全部”及表格稳定…');
         await waitForStableResult(dialog, `${rank.label}导出弹窗表格稳定`);
 
         const button = await waitFor(
@@ -2032,6 +2060,7 @@
             },
             {description: `${rank.label}弹窗导出按钮可点击`}
         );
+        log('[导出 4/4] 表格已稳定，点击“导出表格”…');
         const resourceCount = performance.getEntriesByType('resource').length;
         clickElement(button, `点击${rank.label}弹窗导出按钮`);
         await waitFor(
