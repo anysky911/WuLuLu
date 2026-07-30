@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.21
+// @version      1.0.22
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.21';
+    const VERSION = '1.0.22';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -324,7 +324,7 @@
                 #${PANEL_ID} .lp-dates { margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dbe3ee; }
                 #${PANEL_ID} .lp-dates[hidden] { display: none; }
                 #${PANEL_ID} .lp-tip { margin: 6px 0 0; color: var(--lp-muted); font-size: 11px; }
-                #${PANEL_ID} .lp-buttons { display: grid; grid-template-columns: 1fr 1.3fr .7fr; gap: 6px; }
+                #${PANEL_ID} .lp-buttons { display: grid; grid-template-columns: 1fr 1.3fr .7fr 1fr; gap: 6px; }
                 #${PANEL_ID} .lp-btn {
                     height: 33px; padding: 0 8px; border: 1px solid #b8c5d8; border-radius: 7px;
                     color: #29405f; background: #f8fafc; font-weight: 650; cursor: pointer;
@@ -414,6 +414,7 @@
                     <button type="button" class="lp-btn lp-apply">应用设置</button>
                     <button type="button" class="lp-btn lp-primary lp-start">开始一键导出</button>
                     <button type="button" class="lp-btn lp-danger lp-stop" disabled>停止</button>
+                    <button type="button" class="lp-btn lp-log-export">导出日志</button>
                 </div>
                 <div class="lp-status-line"><span>状态：<b class="lp-status">就绪</b></span><span class="lp-progress-text">0%</span></div>
                 <div class="lp-progress"><i></i></div>
@@ -462,6 +463,7 @@
         panel.querySelector('.lp-apply').addEventListener('click', () => runApplyOnly());
         panel.querySelector('.lp-start').addEventListener('click', () => runBatchExport());
         panel.querySelector('.lp-stop').addEventListener('click', requestStop);
+        panel.querySelector('.lp-log-export').addEventListener('click', exportDiagnosticLog);
         panel.querySelector('.lp-collapse').addEventListener('click', (event) => {
             event.stopPropagation();
             state.settings.ui.collapsed = !state.settings.ui.collapsed;
@@ -639,6 +641,45 @@
         logBox.scrollTop = logBox.scrollHeight;
     }
 
+    function exportDiagnosticLog() {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        log('正在导出诊断日志，可将下载的 .txt 文件上传给我。');
+        const settingsSnapshot = {
+            timeMode: state.settings?.timeMode,
+            startDate: state.settings?.startDate,
+            endDate: state.settings?.endDate,
+            sameDay: state.settings?.sameDay,
+            minPrice: state.settings?.minPrice,
+            maxPrice: state.settings?.maxPrice,
+            categories: state.settings?.categories,
+            ranks: state.settings?.ranks,
+            loadTimeoutSeconds: state.settings?.loadTimeoutSeconds,
+            stableWaitSeconds: state.settings?.stableWaitSeconds,
+        };
+        const content = [
+            `${SCRIPT_NAME} 诊断日志`,
+            `脚本版本: ${VERSION}`,
+            `导出时间: ${new Date().toLocaleString('zh-CN', {hour12: false})}`,
+            `页面地址: ${location.href}`,
+            `页面标题: ${document.title}`,
+            `任务状态: ${state.running ? '运行中' : '未运行'}`,
+            `配置快照: ${JSON.stringify(settingsSnapshot)}`,
+            '',
+            '--- 日志 ---',
+            ...state.logs.map((item) => `[${item.stamp}] [${item.level}] ${item.message}`),
+        ].join('\n');
+        const blob = new Blob([content], {type: 'text/plain;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `罗盘导出助手-诊断日志-${timestamp}.txt`;
+        link.style.display = 'none';
+        document.documentElement.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
     function setStatus(text) {
         if (state.panel) state.panel.querySelector('.lp-status').textContent = text;
     }
@@ -689,8 +730,13 @@
             assertRunning();
             try {
                 const value = await getter();
-                if (predicate(value)) return value;
-                if (value && typeof value === 'object' && value.reason) lastReason = value.reason;
+                // {reason: '...'} 是轮询未满足时的诊断信息，不是成功结果。
+                // 必须先处理它，否则会把错误说明对象当作已定位的 DOM 控件。
+                if (value && typeof value === 'object' && typeof value.reason === 'string') {
+                    lastReason = value.reason;
+                } else if (predicate(value)) {
+                    return value;
+                }
             } catch (error) {
                 if (error instanceof TaskStoppedError) throw error;
                 lastReason = error.message;
