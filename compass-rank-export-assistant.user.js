@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.17
+// @version      1.0.18
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.17';
+    const VERSION = '1.0.18';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -749,7 +749,9 @@
     }
 
     function closestClickable(element) {
-        return element?.closest('button, a, label, [role="button"], [role="tab"], [role="option"], [role="menuitem"], [role="gridcell"]')
+        // 页面组件偶尔会把非 Element 对象混入候选集合；不能假定其具有 closest()。
+        if (!element || typeof element.closest !== 'function') return null;
+        return element.closest('button, a, label, [role="button"], [role="tab"], [role="option"], [role="menuitem"], [role="gridcell"]')
             || element;
     }
 
@@ -1626,7 +1628,10 @@
             .map(closestClickable)
             .filter((element, index, array) => element && array.indexOf(element) === index)
             .map((element) => {
-                const context = normalizeText(element.parentElement?.textContent || element.closest('div, section, form')?.textContent || '');
+                const contextRoot = typeof element.closest === 'function'
+                    ? element.closest('div, section, form')
+                    : null;
+                const context = normalizeText(element.parentElement?.textContent || contextRoot?.textContent || '');
                 let score = 0;
                 if (/price|价格/.test(elementSignal(element))) score += 12;
                 if (/价格带|价格/.test(context)) score += 8;
