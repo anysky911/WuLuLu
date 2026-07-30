@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.15
+// @version      1.0.16
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.15';
+    const VERSION = '1.0.16';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1970,6 +1970,18 @@
         return null;
     }
 
+    // 部分罗盘版本会把导出表格、开关和提示层渲染到不同的 Portal 容器中。
+    // 由“加载全部”开关向上反查表格容器，避免错误使用只承载提示文案的小对话框。
+    function findExportWorkspaceFromToggle(toggle) {
+        for (let node = toggle; node && node !== document.body; node = node.parentElement) {
+            if (!isVisible(node) || state.panel.contains(node)) continue;
+            const table = queryVisibleAll('table, [role="table"], .ecom-table, [class*="data-table"], [class*="rank-table"]', node)
+                .find((element) => !state.panel.contains(element));
+            if (table) return node;
+        }
+        return null;
+    }
+
     function isToggleOn(element) {
         if (element instanceof HTMLInputElement) return element.checked;
         const nestedInput = element.querySelector?.('input[type="checkbox"]');
@@ -2043,14 +2055,20 @@
         );
         log(`[导出 2/4] ${rank.label}导出弹窗已显示。`);
 
-        const toggle = findLoadAllToggle(dialog);
+        // 先在识别到的对话框中查找；若 Portal 把开关挂在同页另一容器，
+        // 回退到页面范围，并由开关反查其所属表格区域。
+        let exportWorkspace = dialog;
+        let toggle = findLoadAllToggle(dialog) || findLoadAllToggle(document.body);
+        const workspaceFromToggle = toggle && findExportWorkspaceFromToggle(toggle);
+        if (workspaceFromToggle) exportWorkspace = workspaceFromToggle;
         if (toggle) {
             if (!isToggleOn(toggle)) {
                 log('[导出 3/4] 检测到“加载全部”默认关闭，正在主动开启…');
                 clickElement(toggle, '开启加载全部');
                 await waitFor(
                     () => isToggleOn(toggle)
-                        || findLoadAllToggle(dialog) && isToggleOn(findLoadAllToggle(dialog))
+                        || findLoadAllToggle(exportWorkspace) && isToggleOn(findLoadAllToggle(exportWorkspace))
+                        || findLoadAllToggle(document.body) && isToggleOn(findLoadAllToggle(document.body))
                         || {reason: '加载全部开关尚未呈现 checked/active/aria-checked=true 状态'},
                     {description: '加载全部开关开启'}
                 );
@@ -2063,11 +2081,11 @@
         }
 
         log('[导出 3/4] 等待“加载全部”及表格稳定…');
-        await waitForStableResult(dialog, `${rank.label}导出弹窗表格稳定`);
+        await waitForStableResult(exportWorkspace, `${rank.label}导出弹窗表格稳定`);
 
         const button = await waitFor(
             () => {
-                const found = findModalExportButton(dialog);
+                const found = findModalExportButton(exportWorkspace) || findModalExportButton(dialog);
                 return found && !isDisabled(found)
                     ? found
                     : {reason: found ? `弹窗导出按钮仍不可点击（${describeElement(found)}）` : '弹窗内未找到 export/download/导出特征按钮'};
