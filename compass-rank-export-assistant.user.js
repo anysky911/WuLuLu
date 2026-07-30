@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.24
+// @version      1.0.25
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.24';
+    const VERSION = '1.0.25';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1744,6 +1744,12 @@
     }
 
     function findPriceConfirmButton(dialog) {
+        const primary = queryVisibleAll(
+            '.ecom-modal-footer-btn-wrapper > button.ecom-btn-primary, [class*="modal-footer"] > button[class*="primary"]',
+            dialog
+        )
+            .filter((button) => normalizeText(button.textContent) === '确定' && !isDisabled(button))[0];
+        if (primary) return primary;
         return queryVisibleAll('button, [role="button"], [data-action], [data-testid]', dialog)
             .filter((element) => normalizeText(element.textContent) === '确定')
             .map(closestClickable)
