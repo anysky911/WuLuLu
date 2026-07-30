@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.20
+// @version      1.0.21
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.20';
+    const VERSION = '1.0.21';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1727,7 +1727,18 @@
             {description: '价格范围选择弹窗真正显示'}
         );
 
-        const inputs = modal.inputs.slice(0, 2);
+        // waitFor 在不同页面重绘时可能返回候选对象或其 DOM 节点；统一重新从
+        // 当前弹窗读取输入框，避免依赖已失效的 inputs 缓存。
+        const modalElement = modal?.element instanceof Element ? modal.element : modal;
+        if (!(modalElement instanceof Element)) {
+            throw new Error('价格范围弹窗定位结果无效：未获得 DOM 容器。');
+        }
+        const inputs = queryVisibleAll('input', modalElement)
+            .filter((input) => input instanceof HTMLInputElement && !input.readOnly && !input.disabled)
+            .slice(0, 2);
+        if (inputs.length < 2) {
+            throw new Error(`价格范围弹窗中只找到 ${inputs.length} 个可编辑输入框，无法填写最低价和最高价。`);
+        }
         for (let index = 0; index < 2; index += 1) {
             const label = index === 0 ? '最低价' : '最高价';
             setNativeInputValue(inputs[index], values[index]);
@@ -1738,14 +1749,14 @@
             );
         }
         const confirmButton = await waitFor(
-            () => findPriceConfirmButton(modal.element) || {
+            () => findPriceConfirmButton(modalElement) || {
                 reason: '价格范围弹窗内未找到可点击的“确定”按钮',
             },
             {description: '价格范围确定按钮'}
         );
         clickElement(confirmButton, '确认价格范围');
         await waitFor(
-            () => !modal.element.isConnected || !isVisible(modal.element)
+            () => !modalElement.isConnected || !isVisible(modalElement)
                 || {reason: '已点击“确定”，但价格范围弹窗仍显示，可能尚未完成提交'},
             {description: '价格范围提交完成'}
         );
