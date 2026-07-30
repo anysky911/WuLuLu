@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.16
+// @version      1.0.17
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.16';
+    const VERSION = '1.0.17';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1619,17 +1619,78 @@
         input.dispatchEvent(new view.Event('blur', {bubbles: true}));
     }
 
+    function findCustomPriceButton() {
+        const exactCandidates = queryVisibleAll('button, [role="button"], a, [data-action], [data-testid]')
+            .filter((element) => !state.panel.contains(element))
+            .filter((element) => normalizeText(element.textContent) === '自定义')
+            .map(closestClickable)
+            .filter((element, index, array) => element && array.indexOf(element) === index)
+            .map((element) => {
+                const context = normalizeText(element.parentElement?.textContent || element.closest('div, section, form')?.textContent || '');
+                let score = 0;
+                if (/price|价格/.test(elementSignal(element))) score += 12;
+                if (/价格带|价格/.test(context)) score += 8;
+                if (element.hasAttribute('data-action') || element.hasAttribute('data-testid')) score += 3;
+                return {element, score};
+            })
+            .sort((a, b) => b.score - a.score);
+        return exactCandidates[0]?.element || null;
+    }
+
+    function findCustomPriceDialog() {
+        const candidates = queryVisibleAll([
+            '[role="dialog"]',
+            '.ecom-modal',
+            '[data-testid*="modal" i]',
+            '[class*="modal"][class*="content"]',
+            '[class*="dialog"]',
+        ].join(','))
+            .filter((element) => !state.panel.contains(element))
+            .map((element) => {
+                const inputs = queryVisibleAll('input', element)
+                    .filter((input) => input instanceof HTMLInputElement && !input.readOnly && !input.disabled);
+                const signal = elementSignal(element);
+                const hasConfirm = queryVisibleAll('button, [role="button"]', element)
+                    .some((button) => normalizeText(button.textContent) === '确定' && !isDisabled(button));
+                const score = (inputs.length >= 2 ? 10 : 0)
+                    + (/价格大于|价格小于|价格范围|price/.test(signal) ? 18 : 0)
+                    + (hasConfirm ? 6 : 0);
+                return {element, inputs, score};
+            })
+            .filter((item) => item.score >= 16)
+            .sort((a, b) => b.score - a.score);
+        return candidates[0] || null;
+    }
+
+    function findPriceConfirmButton(dialog) {
+        return queryVisibleAll('button, [role="button"], [data-action], [data-testid]', dialog)
+            .filter((element) => normalizeText(element.textContent) === '确定')
+            .map(closestClickable)
+            .filter((element, index, array) => element && !isDisabled(element) && array.indexOf(element) === index)[0] || null;
+    }
+
     async function setPagePrice() {
-        const inputs = await waitFor(
-            () => {
-                const result = findPriceInputs();
-                return result.length >= 2
-                    ? result
-                    : {reason: `只找到 ${result.length} 个价格输入框；已检查 name/data-field/data-testid/class 中的 price 及“价格”筛选容器`};
-            },
-            {description: '最低价和最高价输入框'}
-        );
         const values = [state.settings.minPrice, state.settings.maxPrice];
+        if (!values[0] && !values[1]) {
+            log('价格未填写，保留页面当前价格筛选。');
+            return;
+        }
+
+        const customButton = await waitFor(
+            () => findCustomPriceButton() || {
+                reason: '未找到价格带中的“自定义”可点击控件；已检查 button/role=button/data-action/data-testid 及其价格带上下文',
+            },
+            {description: '价格带自定义入口'}
+        );
+        clickElement(customButton, '打开价格范围选择');
+        const modal = await waitFor(
+            () => findCustomPriceDialog() || {
+                reason: '点击价格带“自定义”后，未找到同时包含价格大于/价格小于输入框和“确定”按钮的可见弹窗',
+            },
+            {description: '价格范围选择弹窗真正显示'}
+        );
+
+        const inputs = modal.inputs.slice(0, 2);
         for (let index = 0; index < 2; index += 1) {
             const label = index === 0 ? '最低价' : '最高价';
             setNativeInputValue(inputs[index], values[index]);
@@ -1639,7 +1700,19 @@
                 {description: `${label}写入验证`, timeoutMs: 3000}
             );
         }
-        log(`价格已设置：最低价 ${values[0] || '不限'}，最高价 ${values[1] || '不限'}。`, 'success');
+        const confirmButton = await waitFor(
+            () => findPriceConfirmButton(modal.element) || {
+                reason: '价格范围弹窗内未找到可点击的“确定”按钮',
+            },
+            {description: '价格范围确定按钮'}
+        );
+        clickElement(confirmButton, '确认价格范围');
+        await waitFor(
+            () => !modal.element.isConnected || !isVisible(modal.element)
+                || {reason: '已点击“确定”，但价格范围弹窗仍显示，可能尚未完成提交'},
+            {description: '价格范围提交完成'}
+        );
+        log(`价格已设置并确认：最低价 ${values[0] || '不限'}，最高价 ${values[1] || '不限'}。`, 'success');
     }
 
     function findCategoryTrigger() {
