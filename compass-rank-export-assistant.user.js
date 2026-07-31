@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.28
+// @version      1.0.29
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.28';
+    const VERSION = '1.0.29';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1858,7 +1858,7 @@
                     log(`价格带“自定义”节点在点击前被页面刷新替换，重新定位（${attempt}/3）…`, 'warn');
                 }
             }
-            await sleep(POLL_INTERVAL * 2);
+            await delay(POLL_INTERVAL * 2);
         }
         throw new Error(`打开价格范围选择失败：${lastReason}`);
     }
@@ -1874,19 +1874,30 @@
             return;
         }
 
-        setStatus('等待手动打开价格弹窗');
-        log('请手动点击罗盘页面价格带中的“自定义”；脚本正在等待价格弹窗打开。', 'warn');
+        setStatus('正在打开价格弹窗');
+        const customPriceButton = await waitFor(
+            () => findCustomPriceButton() || {
+                reason: '未找到价格带中的“自定义”标签；已检查 class*=tagItem/tag-item、role=button、data-action 和 data-testid',
+            },
+            {description: '价格带自定义入口可点击'}
+        );
+        log('已定位价格带“自定义”，正在自动点击。');
+        // 点击前再次定位，避免 React 在日历关闭时替换价格标签节点。
+        if (!customPriceButton.isConnected || !isVisible(customPriceButton)) {
+            log('价格“自定义”节点已被页面刷新替换，正在重新定位。', 'warn');
+        }
+        await clickCustomPriceButtonWithRetry();
         const modal = await waitFor(
             () => findCustomPriceDialog() || {
-                reason: '尚未检测到价格弹窗；请手动点击价格带“自定义”打开包含“输入最小值/输入最大值”的弹窗',
+                reason: '自动点击“自定义”后，尚未检测到包含“输入最小值/输入最大值”的价格弹窗',
             },
-            {description: '用户手动打开价格范围选择弹窗'}
+            {description: '自动打开价格范围选择弹窗'}
         );
         setStatus('正在设置价格');
         if (getCalendarRoots().length === 0) {
-            log('已检测到手动打开的价格弹窗，日期日历也已关闭，开始填写价格。');
+            log('价格弹窗已自动打开，日期日历也已关闭，开始填写价格。');
         } else {
-            log('已检测到手动打开的价格弹窗；仍检测到日期容器，但不再阻塞价格填写。', 'warn');
+            log('价格弹窗已自动打开；仍检测到日期容器，但不再阻塞价格填写。', 'warn');
         }
 
         // waitFor 在不同页面重绘时可能返回候选对象或其 DOM 节点；统一重新从
