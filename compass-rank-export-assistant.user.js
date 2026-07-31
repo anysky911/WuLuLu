@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.29
+// @version      1.0.30
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.29';
+    const VERSION = '1.0.30';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -700,7 +700,8 @@
             '--- 日志 ---',
             ...state.logs.map((item) => `[${item.stamp}] [${item.level}] ${item.message}`),
         ].join('\n');
-        const blob = new Blob([content], {type: 'text/plain;charset=utf-8'});
+        // 添加 UTF-8 BOM，确保 Windows 记事本和诊断工具直接显示中文。
+        const blob = new Blob(['\uFEFF', content], {type: 'text/plain;charset=utf-8'});
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -1850,8 +1851,18 @@
                 lastReason = '本次定位未找到可点击的“自定义”入口';
             } else {
                 try {
-                    clickElement(candidate, '打开价格范围选择');
-                    return;
+                    // 第一次点击可能只会关闭仍显示的日期日历，因此发送完整的
+                    // pointer/mouse/click 激活序列，并在每次点击后验证价格弹窗。
+                    dispatchPageActivationSequence(candidate, '打开价格范围选择');
+                    const modal = await tryWaitFor(
+                        () => findCustomPriceDialog() || {
+                            reason: `第 ${attempt} 次点击后尚未出现价格弹窗`,
+                        },
+                        {description: `第 ${attempt} 次点击价格“自定义”后验证弹窗`, timeoutMs: 2600, intervalMs: 150}
+                    );
+                    if (modal) return modal;
+                    lastReason = `第 ${attempt} 次点击未打开价格弹窗；该次点击可能仅关闭了日期日历`;
+                    log(`${lastReason}，正在重新定位并重试（${attempt}/3）…`, 'warn');
                 } catch (error) {
                     lastReason = error instanceof Error ? error.message : String(error);
                     if (!/DOM 元素不存在|不可见/.test(lastReason)) throw error;
@@ -1886,13 +1897,7 @@
         if (!customPriceButton.isConnected || !isVisible(customPriceButton)) {
             log('价格“自定义”节点已被页面刷新替换，正在重新定位。', 'warn');
         }
-        await clickCustomPriceButtonWithRetry();
-        const modal = await waitFor(
-            () => findCustomPriceDialog() || {
-                reason: '自动点击“自定义”后，尚未检测到包含“输入最小值/输入最大值”的价格弹窗',
-            },
-            {description: '自动打开价格范围选择弹窗'}
-        );
+        const modal = await clickCustomPriceButtonWithRetry();
         setStatus('正在设置价格');
         if (getCalendarRoots().length === 0) {
             log('价格弹窗已自动打开，日期日历也已关闭，开始填写价格。');
