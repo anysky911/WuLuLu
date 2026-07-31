@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.25
+// @version      1.0.26
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.25';
+    const VERSION = '1.0.26';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -111,6 +111,7 @@
             startDate: yesterday,
             endDate: yesterday,
             sameDay: false,
+            suspendPrice: false,
             minPrice: '',
             maxPrice: '',
             categories: ['', '', ''],
@@ -148,6 +149,7 @@
         }
         normalized.loadTimeoutSeconds = clampNumber(normalized.loadTimeoutSeconds, 5, 300, 30);
         normalized.stableWaitSeconds = clampNumber(normalized.stableWaitSeconds, 1, 60, 3);
+        normalized.suspendPrice = Boolean(normalized.suspendPrice);
 
         const maximumDate = yesterdayISO();
         if (!isISODate(normalized.startDate) || normalized.startDate > maximumDate) {
@@ -254,6 +256,17 @@
                     margin: 0 0 9px; padding: 9px; border: 1px solid var(--lp-border); border-radius: 9px;
                 }
                 #${PANEL_ID} legend { padding: 0 5px; color: #334155; font-weight: 650; }
+                #${PANEL_ID} .lp-legend-row {
+                    width: calc(100% - 6px); display: flex; align-items: center; justify-content: space-between;
+                }
+                #${PANEL_ID} .lp-suspend-option {
+                    min-height: 28px; padding: 3px 7px; color: #9f2d24; background: #fff7f6;
+                    border: 1px solid #f4b5af; border-radius: 7px; font-size: 12px; cursor: pointer;
+                }
+                #${PANEL_ID} .lp-suspend-option:has(input:checked) {
+                    color: #fff; background: #dc2626; border-color: #dc2626;
+                }
+                #${PANEL_ID} fieldset.lp-price-suspended .lp-grid { opacity: .48; }
                 #${PANEL_ID} .lp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
                 #${PANEL_ID} .lp-grid-4 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
                 #${PANEL_ID} label { display: flex; align-items: center; gap: 5px; min-width: 0; }
@@ -375,8 +388,8 @@
                         <p class="lp-tip">罗盘通常不提供今天的完整榜单数据，日期最大为昨天。</p>
                     </div>
                 </fieldset>
-                <fieldset>
-                    <legend>价格</legend>
+                <fieldset class="lp-price-fieldset">
+                    <legend class="lp-legend-row"><span>价格</span><label class="lp-suspend-option"><input type="checkbox" data-setting="suspendPrice">挂起</label></legend>
                     <div class="lp-grid">
                         <label class="lp-stack"><span>最低价</span><input type="number" min="0" step="0.01" data-setting="minPrice" placeholder="不限"></label>
                         <label class="lp-stack"><span>最高价</span><input type="number" min="0" step="0.01" data-setting="maxPrice" placeholder="不限"></label>
@@ -436,6 +449,7 @@
         panel.querySelector('[data-setting="startDate"]').value = settings.startDate;
         panel.querySelector('[data-setting="endDate"]').value = settings.endDate;
         panel.querySelector('[data-setting="sameDay"]').checked = settings.sameDay;
+        panel.querySelector('[data-setting="suspendPrice"]').checked = settings.suspendPrice;
         panel.querySelector('[data-setting="minPrice"]').value = settings.minPrice;
         panel.querySelector('[data-setting="maxPrice"]').value = settings.maxPrice;
         panel.querySelector('[data-setting="loadTimeoutSeconds"]').value = settings.loadTimeoutSeconds;
@@ -453,6 +467,7 @@
         state.lastValidStartDate = settings.startDate;
         updateNaturalDateVisibility();
         updateSameDayUI();
+        updatePriceSuspendUI();
         panel.classList.toggle('lp-collapsed', settings.ui.collapsed);
         panel.querySelector('.lp-collapse').textContent = settings.ui.collapsed ? '+' : '−';
     }
@@ -527,6 +542,10 @@
                 state.panel.querySelector('[data-setting="endDate"]').value = state.settings.startDate;
             }
             updateSameDayUI();
+        } else if (target.dataset.setting === 'suspendPrice') {
+            state.settings.suspendPrice = target.checked;
+            updatePriceSuspendUI();
+            log(target.checked ? '价格设置已挂起，执行时将跳过价格筛选。' : '价格设置已恢复，执行时会应用最低价和最高价。');
         } else if (target.dataset.setting === 'minPrice' || target.dataset.setting === 'maxPrice') {
             state.settings[target.dataset.setting] = target.value;
         } else if (target.dataset.setting === 'loadTimeoutSeconds') {
@@ -550,6 +569,18 @@
         if (!preset) return;
         const path = state.settings.categories.join('|');
         preset.value = Array.from(preset.options).some((option) => option.value === path) ? path : '';
+    }
+
+    function updatePriceSuspendUI() {
+        if (!state.panel) return;
+        const suspended = Boolean(state.settings.suspendPrice);
+        const fieldset = state.panel.querySelector('.lp-price-fieldset');
+        fieldset?.classList.toggle('lp-price-suspended', suspended);
+        state.panel.querySelectorAll('[data-setting="minPrice"], [data-setting="maxPrice"]')
+            .forEach((input) => {
+                input.disabled = suspended;
+                input.title = suspended ? '价格设置已挂起，执行时不会修改页面价格筛选' : '';
+            });
     }
 
     function acceptDateChange(input, isStart) {
@@ -649,6 +680,7 @@
             startDate: state.settings?.startDate,
             endDate: state.settings?.endDate,
             sameDay: state.settings?.sameDay,
+            suspendPrice: state.settings?.suspendPrice,
             minPrice: state.settings?.minPrice,
             maxPrice: state.settings?.maxPrice,
             categories: state.settings?.categories,
@@ -961,11 +993,13 @@
                 throw new Error('自然日结束日期不能早于开始日期。');
             }
         }
-        const min = state.settings.minPrice === '' ? null : Number(state.settings.minPrice);
-        const max = state.settings.maxPrice === '' ? null : Number(state.settings.maxPrice);
-        if (min !== null && (!Number.isFinite(min) || min < 0)) throw new Error('最低价必须是非负数字。');
-        if (max !== null && (!Number.isFinite(max) || max < 0)) throw new Error('最高价必须是非负数字。');
-        if (min !== null && max !== null && min > max) throw new Error('最低价不能高于最高价。');
+        if (!state.settings.suspendPrice) {
+            const min = state.settings.minPrice === '' ? null : Number(state.settings.minPrice);
+            const max = state.settings.maxPrice === '' ? null : Number(state.settings.maxPrice);
+            if (min !== null && (!Number.isFinite(min) || min < 0)) throw new Error('最低价必须是非负数字。');
+            if (max !== null && (!Number.isFinite(max) || max < 0)) throw new Error('最高价必须是非负数字。');
+            if (min !== null && max !== null && min > max) throw new Error('最低价不能高于最高价。');
+        }
         const nonEmptyCategories = state.settings.categories.filter(Boolean);
         if (nonEmptyCategories.length > 0 && nonEmptyCategories.length < 3) {
             throw new Error('行业类目需填写完整的一级、二级、三级名称，或全部留空。');
@@ -1779,6 +1813,10 @@
     }
 
     async function setPagePrice() {
+        if (state.settings.suspendPrice) {
+            log('价格设置已挂起：本次跳过价格筛选，不修改罗盘页面当前价格。', 'warn');
+            return;
+        }
         const values = [state.settings.minPrice, state.settings.maxPrice];
         if (!values[0] && !values[1]) {
             log('价格未填写，保留页面当前价格筛选。');
