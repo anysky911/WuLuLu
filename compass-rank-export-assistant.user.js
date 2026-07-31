@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.27
+// @version      1.0.28
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.27';
+    const VERSION = '1.0.28';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1237,12 +1237,20 @@
         if (outside) {
             dispatchPageActivationSequence(outside, '点击日历外部区域关闭日期日历', {scroll: false, focus: false});
         }
-        await waitFor(
+        const closedByOutside = await tryWaitFor(
             () => getCalendarRoots().length === 0
                 || {reason: `点击外部区域后仍检测到 ${getCalendarRoots().length} 个可见日期日历容器`},
             {description: '日期设置完成后关闭日历', timeoutMs: 3500, intervalMs: 150}
         );
-        log('日期设置完成，日历已关闭。', 'success');
+        if (closedByOutside) {
+            log('日期设置完成，日历已关闭。', 'success');
+            return true;
+        }
+
+        // 罗盘某些版本只响应用户的可信点击，脚本事件无法强制关闭日历。
+        // 不在这里终止任务；下一步由用户点击价格“自定义”，该可信点击会关闭日历并打开价格弹窗。
+        log('日期已设置，但日历仍显示；请在下一步手动点击价格带“自定义”，任务将继续等待价格弹窗。', 'warn');
+        return false;
     }
 
     function getCalendarRoots() {
@@ -1875,7 +1883,11 @@
             {description: '用户手动打开价格范围选择弹窗'}
         );
         setStatus('正在设置价格');
-        log('已检测到手动打开的价格弹窗，开始填写价格。');
+        if (getCalendarRoots().length === 0) {
+            log('已检测到手动打开的价格弹窗，日期日历也已关闭，开始填写价格。');
+        } else {
+            log('已检测到手动打开的价格弹窗；仍检测到日期容器，但不再阻塞价格填写。', 'warn');
+        }
 
         // waitFor 在不同页面重绘时可能返回候选对象或其 DOM 节点；统一重新从
         // 当前弹窗读取输入框，避免依赖已失效的 inputs 缓存。
