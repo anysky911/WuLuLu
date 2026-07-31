@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.26
+// @version      1.0.27
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.26';
+    const VERSION = '1.0.27';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1200,6 +1200,49 @@
         const secondCalendar = getCalendarRoots()[0] || await openNaturalDateCalendar(radio);
         await selectDateFromCalendar(state.settings.endDate, secondCalendar, '结束日期', reopenCalendar);
         log(`已在罗盘日历中选择 ${state.settings.startDate} 至 ${state.settings.endDate}。`, 'success');
+        await closeNaturalDateCalendar();
+    }
+
+    async function closeNaturalDateCalendar() {
+        if (!getCalendarRoots().length) {
+            log('日期日历已自动关闭。');
+            return;
+        }
+
+        const view = document.defaultView;
+        const keyTarget = document.activeElement instanceof Element ? document.activeElement : document.body;
+        const keyboardOptions = {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27,
+            which: 27,
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+        };
+        keyTarget.dispatchEvent(new view.KeyboardEvent('keydown', keyboardOptions));
+        keyTarget.dispatchEvent(new view.KeyboardEvent('keyup', keyboardOptions));
+
+        const closedByEscape = await tryWaitFor(
+            () => getCalendarRoots().length === 0
+                || {reason: `Escape 后仍检测到 ${getCalendarRoots().length} 个可见日期日历容器`},
+            {description: '日期日历通过 Escape 关闭', timeoutMs: 1800, intervalMs: 120}
+        );
+        if (closedByEscape) {
+            log('日期设置完成，日历已关闭。', 'success');
+            return;
+        }
+
+        const outside = state.panel?.querySelector('.lp-status-line') || state.panel;
+        if (outside) {
+            dispatchPageActivationSequence(outside, '点击日历外部区域关闭日期日历', {scroll: false, focus: false});
+        }
+        await waitFor(
+            () => getCalendarRoots().length === 0
+                || {reason: `点击外部区域后仍检测到 ${getCalendarRoots().length} 个可见日期日历容器`},
+            {description: '日期设置完成后关闭日历', timeoutMs: 3500, intervalMs: 150}
+        );
+        log('日期设置完成，日历已关闭。', 'success');
     }
 
     function getCalendarRoots() {
@@ -1823,19 +1866,16 @@
             return;
         }
 
-        await waitFor(
-            () => findCustomPriceButton() || {
-                reason: '未找到价格带中的“自定义”可点击控件；已检查 button/role=button/data-action/data-testid 及其价格带上下文',
-            },
-            {description: '价格带自定义入口'}
-        );
-        await clickCustomPriceButtonWithRetry();
+        setStatus('等待手动打开价格弹窗');
+        log('请手动点击罗盘页面价格带中的“自定义”；脚本正在等待价格弹窗打开。', 'warn');
         const modal = await waitFor(
             () => findCustomPriceDialog() || {
-                reason: '点击价格带“自定义”后，未找到同时包含价格大于/价格小于输入框和“确定”按钮的可见弹窗',
+                reason: '尚未检测到价格弹窗；请手动点击价格带“自定义”打开包含“输入最小值/输入最大值”的弹窗',
             },
-            {description: '价格范围选择弹窗真正显示'}
+            {description: '用户手动打开价格范围选择弹窗'}
         );
+        setStatus('正在设置价格');
+        log('已检测到手动打开的价格弹窗，开始填写价格。');
 
         // waitFor 在不同页面重绘时可能返回候选对象或其 DOM 节点；统一重新从
         // 当前弹窗读取输入框，避免依赖已失效的 inputs 缓存。
