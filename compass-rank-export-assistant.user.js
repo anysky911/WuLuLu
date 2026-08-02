@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.34
+// @version      1.0.35
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.34';
+    const VERSION = '1.0.35';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -2457,8 +2457,49 @@
         return null;
     }
 
+    function getExportProgressScopes(exportWorkspace, dialog) {
+        return [
+            exportWorkspace,
+            dialog,
+            ...getVisibleDialogs().filter(dialogLooksLikeExport),
+        ].filter((scope, index, array) => scope && array.indexOf(scope) === index);
+    }
+
+    async function waitForInitialExportData(exportWorkspace, dialog) {
+        const initialState = await waitFor(
+            () => {
+                const scopes = getExportProgressScopes(exportWorkspace, dialog);
+                const progress = readExportLoadProgress(...scopes);
+                if (!progress) {
+                    return {reason: '导出弹窗内部尚未同时出现顶部“共 X 条数据”和底部“共 Y 条”'};
+                }
+                const dataRoot = findStableDataRoot(exportWorkspace) || findStableDataRoot(dialog);
+                if (!dataRoot) {
+                    return {reason: `已识别 ${progress.loaded}/${progress.total} 条，但底部表格尚未出现`};
+                }
+                const rows = dataRoot.querySelectorAll('tbody tr, [role="row"]').length;
+                if (rows < 2) {
+                    return {reason: `已识别 ${progress.loaded}/${progress.total} 条，但表格当前只有 ${rows} 行`};
+                }
+                const toggle = findLoadAllToggle(exportWorkspace) || findLoadAllToggle(dialog);
+                if (!toggle) {
+                    return {reason: `表格已出现 ${rows} 行，但“加载全部”开关尚未显示`};
+                }
+                if (hasVisibleLoading(exportWorkspace) || hasVisibleLoading(dialog)) {
+                    return {reason: `初始数据为 ${progress.loaded}/${progress.total} 条，仍检测到加载状态`};
+                }
+                return {progress, rows};
+            },
+            {description: '导出弹窗底部数据和分页显示完整'}
+        );
+        log(`导出弹窗初始数据已显示：表格 ${initialState.rows} 行，条数 ${initialState.progress.loaded}/${initialState.progress.total}。`);
+        await waitForStableResult(exportWorkspace, '导出弹窗初始表格稳定');
+        log('导出弹窗底部数据和分页已稳定，可以开启“加载全部”。', 'success');
+        return initialState;
+    }
+
     async function waitForLoadAllComplete(exportWorkspace, dialog) {
-        const progressScopes = [exportWorkspace, dialog, ...getVisibleDialogs(), document.body];
+        const progressScopes = getExportProgressScopes(exportWorkspace, dialog);
         const initial = readExportLoadProgress(...progressScopes);
         if (initial) {
             log(`“加载全部”当前进度：已加载 ${initial.loaded}/${initial.total} 条。`);
@@ -2552,8 +2593,16 @@
         // 回退到页面范围，并由开关反查其所属表格区域。
         let exportWorkspace = dialog;
         let toggle = findLoadAllToggle(dialog) || findLoadAllToggle(document.body);
-        const workspaceFromToggle = toggle && findExportWorkspaceFromToggle(toggle);
+        let workspaceFromToggle = toggle && findExportWorkspaceFromToggle(toggle);
         if (workspaceFromToggle) exportWorkspace = workspaceFromToggle;
+
+        log('[导出 3/4] 先等待弹窗底部数据、分页和总条数显示…');
+        await waitForInitialExportData(exportWorkspace, dialog);
+        // 初始表格稳定后 React 可能替换开关节点，点击前必须重新定位。
+        toggle = findLoadAllToggle(dialog) || findLoadAllToggle(exportWorkspace) || findLoadAllToggle(document.body);
+        workspaceFromToggle = toggle && findExportWorkspaceFromToggle(toggle);
+        if (workspaceFromToggle) exportWorkspace = workspaceFromToggle;
+
         if (toggle) {
             if (!isToggleOn(toggle)) {
                 log('[导出 3/4] 检测到“加载全部”默认关闭，正在主动开启…');
