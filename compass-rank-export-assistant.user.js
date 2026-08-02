@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.33
+// @version      1.0.34
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.33';
+    const VERSION = '1.0.34';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -929,6 +929,39 @@
         return element;
     }
 
+    function dispatchPageUnhover(element, relatedTarget, description) {
+        if (!element || !isVisible(element)) return false;
+        const view = element.ownerDocument.defaultView;
+        const rect = element.getBoundingClientRect();
+        const common = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: rect.right - 1,
+            clientY: rect.bottom - 1,
+            relatedTarget: relatedTarget || null,
+        };
+        if (typeof view.PointerEvent === 'function') {
+            element.dispatchEvent(new view.PointerEvent('pointerout', {
+                ...common,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+            }));
+            element.dispatchEvent(new view.PointerEvent('pointerleave', {
+                ...common,
+                bubbles: false,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+            }));
+        }
+        element.dispatchEvent(new view.MouseEvent('mouseout', common));
+        element.dispatchEvent(new view.MouseEvent('mouseleave', {...common, bubbles: false}));
+        console.log(`[${SCRIPT_NAME}] ${description}：${describeElement(element)}`);
+        return true;
+    }
+
     function describeElement(element) {
         if (!element) return 'null';
         const tag = element.tagName?.toLowerCase() || 'unknown';
@@ -1265,6 +1298,38 @@
             || moreRadio.closest('.ecom-radio-button')
             || moreRadio
         );
+        const visibleCalendarRoots = getCalendarRoots();
+        const outsideTarget = queryVisibleAll('[role="tabpanel"], [role="main"], main, table')
+            .find((element) => !state.panel.contains(element)
+                && !visibleCalendarRoots.some((root) => root.contains(element) || element.contains(root)));
+        const hoverLayers = queryVisibleAll([
+            '.ecom-dorami-date-picker-show-more-dropdown-panel-wrapper',
+            '.ecom-picker-dropdown',
+            '.ecom-date-picker-dropdown',
+            '.aurora-picker-dropdown',
+            '.aurora-date-picker-dropdown',
+        ].join(','))
+            .filter((element) => !state.panel.contains(element));
+        if (outsideTarget && (hoverLayers.length || moreTrigger)) {
+            log('该日期菜单由悬停展开，正在把鼠标移出“更多”和日历区域…', 'warn');
+            hoverLayers.forEach((element) => {
+                dispatchPageUnhover(element, outsideTarget, '移出日期弹层');
+            });
+            if (moreTrigger) {
+                dispatchPageUnhover(moreTrigger, outsideTarget, '移出“更多”时间控件');
+            }
+            dispatchPageHover(outsideTarget, '将鼠标移入页面结果区域', {scroll: false});
+            const closedByMouseLeave = await tryWaitFor(
+                () => getCalendarRoots().length === 0
+                    || {reason: `鼠标移出后仍检测到 ${getCalendarRoots().length} 个可见日期日历容器`},
+                {description: '通过鼠标移出关闭日期日历', timeoutMs: 3500, intervalMs: 150}
+            );
+            if (closedByMouseLeave) {
+                log(`${context}，已通过鼠标移出收起日历。`, 'success');
+                return true;
+            }
+        }
+
         if (moreTrigger) {
             log('外部点击未关闭日历，正在再次点击“更多”收起日期弹层…', 'warn');
             dispatchPageActivationSequence(moreTrigger, '再次点击“更多”关闭日期日历', {scroll: false});
