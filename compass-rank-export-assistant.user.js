@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.31
+// @version      1.0.32
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.31';
+    const VERSION = '1.0.32';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -425,7 +425,7 @@
                 </fieldset>
                 <div class="lp-buttons">
                     <button type="button" class="lp-btn lp-apply">应用设置</button>
-                    <button type="button" class="lp-btn lp-primary lp-start">开始一键导出</button>
+                    <button type="button" class="lp-btn lp-primary lp-start">一键导出</button>
                     <button type="button" class="lp-btn lp-danger lp-stop" disabled>停止</button>
                     <button type="button" class="lp-btn lp-log-export">导出日志</button>
                 </div>
@@ -1067,7 +1067,7 @@
                 setStatus(`处理 ${rank.label}`);
                 setProgress(index, ranks.length, rank.label);
                 log(`—— 开始处理 ${rank.label}（${index + 1}/${ranks.length}）——`);
-                await applySettingsForRank(rank);
+                await applySettingsForRank(rank, {skipTime: true});
                 await exportCurrentRank(rank);
                 setProgress(index + 1, ranks.length, rank.label);
                 log(`${rank.label}导出指令已提交。`, 'success');
@@ -1078,11 +1078,15 @@
         });
     }
 
-    async function applySettingsForRank(rank) {
+    async function applySettingsForRank(rank, {skipTime = false} = {}) {
         log(`[1/5] 切换到${rank.label}…`);
         await switchRank(rank);
-        log(`[2/5] 设置时间…`);
-        await setPageTime();
+        if (skipTime) {
+            log('[2/5] 跳过时间设置：一键导出使用页面当前已应用日期。');
+        } else {
+            log(`[2/5] 设置时间…`);
+            await setPageTime();
+        }
         log(`[3/5] 设置价格…`);
         await setPagePrice();
         log(`[4/5] 设置三级行业类目…`);
@@ -2307,6 +2311,64 @@
         return /\b(checked|active|on|is-checked)\b/i.test(`${element.className || ''} ${target?.className || ''}`);
     }
 
+    function parseCountMatches(text, pattern) {
+        return Array.from(text.matchAll(pattern), (match) => Number(match[1].replaceAll(',', '')))
+            .filter((value) => Number.isFinite(value));
+    }
+
+    function readExportLoadProgress(...scopes) {
+        const uniqueScopes = scopes
+            .filter((scope, index, array) => scope && array.indexOf(scope) === index);
+
+        for (const scope of uniqueScopes) {
+            const text = normalizeText(scope.textContent);
+            // 导出页顶部的“共 X 条数据”表示已经载入的数量；分页区的“共 Y 条”表示总数。
+            const loadedCounts = parseCountMatches(text, /共\s*([\d,]+)\s*条数据/g);
+            const totalCounts = parseCountMatches(text, /共\s*([\d,]+)\s*条(?!数据)/g);
+            if (!loadedCounts.length || !totalCounts.length) continue;
+            return {
+                loaded: Math.max(...loadedCounts),
+                total: Math.max(...totalCounts),
+                scope,
+            };
+        }
+        return null;
+    }
+
+    async function waitForLoadAllComplete(exportWorkspace, dialog) {
+        const progressScopes = [exportWorkspace, dialog, ...getVisibleDialogs(), document.body];
+        const initial = readExportLoadProgress(...progressScopes);
+        if (initial) {
+            log(`“加载全部”当前进度：已加载 ${initial.loaded}/${initial.total} 条。`);
+        } else {
+            log('正在识别导出页顶部“共 X 条数据”和底部“共 Y 条”…');
+        }
+
+        return waitFor(
+            () => {
+                const currentToggle = findLoadAllToggle(exportWorkspace)
+                    || findLoadAllToggle(dialog)
+                    || findLoadAllToggle(document.body);
+                if (currentToggle && !isToggleOn(currentToggle)) {
+                    return {reason: '“加载全部”开关仍为关闭状态'};
+                }
+
+                const progress = readExportLoadProgress(...progressScopes);
+                if (!progress) {
+                    return {reason: '未能同时识别顶部“共 X 条数据”和底部“共 Y 条”'};
+                }
+                if (progress.total <= 0) {
+                    return {reason: `已识别条数 ${progress.loaded}/${progress.total}，总条数尚未有效显示`};
+                }
+                if (progress.loaded < progress.total) {
+                    return {reason: `加载全部尚未完成：已加载 ${progress.loaded}/${progress.total} 条`};
+                }
+                return progress;
+            },
+            {description: '加载全部达到导出总条数'}
+        );
+    }
+
     function findModalExportButton(dialog) {
         const candidates = queryVisibleAll('button, [role="button"], a, [data-action], [data-testid]', dialog)
             .filter((element) => /export|download|导出|下载/i.test(elementSignal(element)))
@@ -2385,10 +2447,13 @@
                 log('“加载全部”已经开启。');
             }
         } else {
-            log('导出弹窗未呈现“加载全部”开关；该页面版本可能直接加载全部，将继续用表格稳定性检测确认。', 'warn');
+            log('导出弹窗未呈现“加载全部”开关；将根据已加载条数与总条数继续核验。', 'warn');
         }
 
-        log('[导出 3/4] 等待“加载全部”及表格稳定…');
+        log('[导出 3/4] 等待“加载全部”达到总条数…');
+        const loadProgress = await waitForLoadAllComplete(exportWorkspace, dialog);
+        log(`“加载全部”完成：已加载 ${loadProgress.loaded}/${loadProgress.total} 条。`, 'success');
+        log('全部数据已加载，继续等待表格稳定…');
         await waitForStableResult(exportWorkspace, `${rank.label}导出弹窗表格稳定`);
 
         const button = await waitFor(
@@ -2400,7 +2465,7 @@
             },
             {description: `${rank.label}弹窗导出按钮可点击`}
         );
-        log('[导出 4/4] 表格已稳定，点击“导出表格”…');
+        log(`[导出 4/4] 已加载 ${loadProgress.loaded}/${loadProgress.total} 条且表格稳定，点击“导出表格”…`);
         const resourceCount = performance.getEntriesByType('resource').length;
         clickElement(button, `点击${rank.label}弹窗导出按钮`);
         await waitFor(
