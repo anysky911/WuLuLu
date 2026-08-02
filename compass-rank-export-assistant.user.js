@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.30
+// @version      1.0.31
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.30';
+    const VERSION = '1.0.31';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1774,16 +1774,23 @@
             .filter((element) => !state.panel.contains(element))
             .filter((element) => normalizeText(element.textContent) === '自定义')
             .filter((element, index, array) => element && array.indexOf(element) === index)
-            .map((element) => {
-                const contextRoot = typeof element.closest === 'function'
-                    ? element.closest('div, section, form')
+            .map((sourceElement) => {
+                // 实际 DOM 为 div.tagItem > span > span“自定义”。人工点击落在最内层
+                // span；若只对外层 div 派发事件，子节点上的 React 处理器不会收到事件。
+                const leafText = queryVisibleAll('span', sourceElement)
+                    .filter((span) => normalizeText(span.textContent) === '自定义')
+                    .sort((a, b) => a.querySelectorAll('span').length - b.querySelectorAll('span').length)[0];
+                const element = leafText || sourceElement;
+                const contextRoot = typeof sourceElement.closest === 'function'
+                    ? sourceElement.closest('div, section, form')
                     : null;
-                const context = normalizeText(element.parentElement?.textContent || contextRoot?.textContent || '');
+                const context = normalizeText(sourceElement.parentElement?.textContent || contextRoot?.textContent || '');
                 let score = 0;
-                if (/(tagItem|tag-item)/.test(String(element.className || ''))) score += 18;
-                if (/price|价格/.test(elementSignal(element))) score += 12;
+                if (/(tagItem|tag-item)/.test(String(sourceElement.className || ''))) score += 18;
+                if (leafText) score += 10;
+                if (/price|价格/.test(elementSignal(sourceElement))) score += 12;
                 if (/价格带|价格/.test(context)) score += 8;
-                if (element.hasAttribute('data-action') || element.hasAttribute('data-testid')) score += 3;
+                if (sourceElement.hasAttribute('data-action') || sourceElement.hasAttribute('data-testid')) score += 3;
                 return {element, score};
             })
             .sort((a, b) => b.score - a.score);
@@ -1853,6 +1860,7 @@
                 try {
                     // 第一次点击可能只会关闭仍显示的日期日历，因此发送完整的
                     // pointer/mouse/click 激活序列，并在每次点击后验证价格弹窗。
+                    log(`第 ${attempt} 次点击价格“自定义”节点：${describeElement(candidate)}`);
                     dispatchPageActivationSequence(candidate, '打开价格范围选择');
                     const modal = await tryWaitFor(
                         () => findCustomPriceDialog() || {
