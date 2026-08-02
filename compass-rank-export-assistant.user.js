@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.37
+// @version      1.0.38
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.37';
+    const VERSION = '1.0.38';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -2572,14 +2572,19 @@
             .sort((a, b) => b.score - a.score)[0]?.element || null;
     }
 
-    function getVisibleExportModeItems() {
-        const menuRoots = queryVisibleAll([
+    function getVisibleExportModeMenuRoots() {
+        return queryVisibleAll([
             '.el-dropdown-menu',
             '[role="menu"]',
             '[class*="dropdown-menu"]',
             '[class*="dropdown"][class*="popper"]',
         ].join(','))
-            .filter((element) => !state.panel.contains(element));
+            .filter((element) => !state.panel.contains(element))
+            .filter((element) => /模式\s*\d+|导出表格/.test(normalizeText(element.textContent)));
+    }
+
+    function getVisibleExportModeItems() {
+        const menuRoots = getVisibleExportModeMenuRoots();
         const candidates = menuRoots.flatMap((root) => queryVisibleAll(
             'li.el-dropdown-menu__item, [class*="dropdown-menu__item"], [role="menuitem"], li, [data-command], [data-value]',
             root
@@ -2605,6 +2610,45 @@
             })
             .filter((item) => item.score >= 50)
             .sort((a, b) => b.score - a.score)[0]?.element || null;
+    }
+
+    async function openExportModeMenu(dialog, exportButton) {
+        let lastReason = '尚未尝试打开';
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+            assertRunning();
+            const dropdownButton = findExportModeDropdownButton(dialog, exportButton);
+            if (!dropdownButton) {
+                lastReason = '未找到“导出表格”右侧的 el-dropdown__caret-button';
+                await delay(POLL_INTERVAL);
+                continue;
+            }
+
+            log(`第 ${attempt} 次尝试打开导出模式菜单：${describeElement(dropdownButton)}`);
+            if (attempt === 1) {
+                dispatchPageActivationSequence(dropdownButton, '点击导出模式下拉按钮', {scroll: false});
+            } else if (attempt === 2) {
+                const innerArrow = queryVisibleAll('svg, i, [class*="arrow"], [class*="caret"]', dropdownButton)[0]
+                    || dropdownButton;
+                dispatchPageActivationSequence(innerArrow, '点击导出模式下拉箭头图标', {scroll: false});
+            } else {
+                dispatchPageHover(dropdownButton, '悬停导出模式下拉按钮', {scroll: false});
+            }
+
+            const menu = await tryWaitFor(
+                () => getVisibleExportModeMenuRoots()[0] || {
+                    reason: `第 ${attempt} 次操作后，未出现包含“模式+数字”的可见下拉菜单`,
+                },
+                {description: `第 ${attempt} 次打开导出模式菜单`, timeoutMs: 2600, intervalMs: 150}
+            );
+            if (menu) {
+                log(`导出模式菜单已通过第 ${attempt} 种方式打开。`, 'success');
+                return menu;
+            }
+            lastReason = `第 ${attempt} 次操作后菜单仍未显示`;
+            log(`${lastReason}，准备重新定位下拉按钮…`, 'warn');
+            await delay(POLL_INTERVAL * 2);
+        }
+        throw new Error(`打开导出模式菜单失败：${lastReason}`);
     }
 
     function findExportDialogCloseButton(dialog) {
@@ -2717,14 +2761,8 @@
             {description: `${rank.label}弹窗导出按钮可点击`}
         );
 
-        const dropdownButton = await waitFor(
-            () => findExportModeDropdownButton(dialog, exportButton) || {
-                reason: '未找到“导出表格”右侧的 el-dropdown__caret-button 下拉按钮',
-            },
-            {description: `${rank.label}导出模式下拉按钮`}
-        );
         log(`[导出 4/4] 已加载 ${loadProgress.loaded}/${loadProgress.total} 条，打开“导出表格”右侧模式菜单…`);
-        clickElement(dropdownButton, '打开导出模式菜单');
+        await openExportModeMenu(dialog, exportButton);
 
         const mode10 = await waitFor(
             () => {
