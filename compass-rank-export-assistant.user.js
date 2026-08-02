@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.36
+// @version      1.0.37
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.36';
+    const VERSION = '1.0.37';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -2572,7 +2572,7 @@
             .sort((a, b) => b.score - a.score)[0]?.element || null;
     }
 
-    function findExportMode10Option() {
+    function getVisibleExportModeItems() {
         const menuRoots = queryVisibleAll([
             '.el-dropdown-menu',
             '[role="menu"]',
@@ -2581,19 +2581,27 @@
         ].join(','))
             .filter((element) => !state.panel.contains(element));
         const candidates = menuRoots.flatMap((root) => queryVisibleAll(
-            'li.el-dropdown-menu__item, [role="menuitem"], li, [data-command], [data-value]',
+            'li.el-dropdown-menu__item, [class*="dropdown-menu__item"], [role="menuitem"], li, [data-command], [data-value]',
             root
         ));
         return candidates
             .filter((element, index, array) => array.indexOf(element) === index)
+            .map((element) => ({element, text: normalizeText(element.textContent)}))
+            .filter((item) => /模式\s*\d+/.test(item.text));
+    }
+
+    function findExportMode10Option() {
+        return getVisibleExportModeItems()
             .map((element) => {
-                const text = normalizeText(element.textContent);
+                const text = element.text;
                 let score = 0;
-                if (/^模式\s*10(?:\s|$)/.test(text)) score += 50;
+                // Element UI 菜单的多列文本可能直接拼接为“模式10导出表格…”，
+                // 因此只要求 10 后面不是另一位数字，不能强制必须有空格。
+                if (/^模式\s*10(?!\d)/.test(text)) score += 50;
                 if (/xlsx\+图片\+图片链接/i.test(text)) score += 25;
                 if (/所有列/.test(text)) score += 10;
-                if (element.matches('[role="menuitem"], li.el-dropdown-menu__item')) score += 5;
-                return {element, text, score};
+                if (element.element.matches('[role="menuitem"], li.el-dropdown-menu__item')) score += 5;
+                return {element: element.element, text, score};
             })
             .filter((item) => item.score >= 50)
             .sort((a, b) => b.score - a.score)[0]?.element || null;
@@ -2719,8 +2727,15 @@
         clickElement(dropdownButton, '打开导出模式菜单');
 
         const mode10 = await waitFor(
-            () => findExportMode10Option() || {
-                reason: '下拉菜单中未找到“模式10 xlsx+图片+图片链接[所有列]”',
+            () => {
+                const found = findExportMode10Option();
+                if (found) return found;
+                const visibleItems = getVisibleExportModeItems().map((item) => item.text).slice(0, 15);
+                return {
+                    reason: visibleItems.length
+                        ? `模式菜单已显示，但当前识别到的选项为：${visibleItems.join(' | ')}`
+                        : '右侧下拉菜单尚未显示，或未发现带“模式+数字”的菜单项',
+                };
             },
             {description: '导出模式10选项显示'}
         );
