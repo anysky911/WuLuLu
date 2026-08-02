@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.38
+// @version      1.0.39
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -2533,6 +2533,15 @@
     }
 
     function findModalExportButton(dialog) {
+        // 导出区同时有“复制表格”和“导出表格”两组下拉按钮；必须先锁定
+        // 文字为“导出表格”的主按钮，不能仅按 export/download 特征取第一项。
+        const exactExportTable = queryVisibleAll('button, [role="button"]', dialog)
+            .map(closestClickable)
+            .filter((element, index, array) => element && array.indexOf(element) === index)
+            .filter((element) => normalizeText(element.textContent) === '导出表格')
+            .filter((element) => !isDisabled(element));
+        if (exactExportTable.length) return exactExportTable[0];
+
         const candidates = queryVisibleAll('button, [role="button"], a, [data-action], [data-testid]', dialog)
             .filter((element) => /export|download|导出|下载/i.test(elementSignal(element)))
             .map(closestClickable)
@@ -2560,6 +2569,14 @@
         ).filter((element) => element !== exportButton && !isDisabled(element));
         if (candidates.length === 1) return candidates[0];
 
+        // Element UI 的下拉触发器有时包在 .el-dropdown 内，caret 不一定是
+        // 主按钮的直接兄弟节点。仅在该按钮组内寻找，避免选中“复制表格”箭头。
+        const groupCandidates = queryVisibleAll(
+            '.el-dropdown button.el-dropdown__caret-button, .el-dropdown [aria-haspopup="true"], button.el-dropdown__caret-button',
+            buttonGroup || dialog
+        ).filter((element) => element !== exportButton && !isDisabled(element));
+        if (groupCandidates.length) return groupCandidates[0];
+
         const exportRect = exportButton.getBoundingClientRect();
         return candidates
             .map((element) => {
@@ -2586,7 +2603,7 @@
     function getVisibleExportModeItems() {
         const menuRoots = getVisibleExportModeMenuRoots();
         const candidates = menuRoots.flatMap((root) => queryVisibleAll(
-            'li.el-dropdown-menu__item, [class*="dropdown-menu__item"], [role="menuitem"], li, [data-command], [data-value]',
+            'li.el-dropdown-menu__item, [class*="dropdown-menu__item"], [role="menuitem"], li:has(.command-label), [data-command], [data-value]',
             root
         ));
         return candidates
@@ -2599,16 +2616,18 @@
         return getVisibleExportModeItems()
             .map((element) => {
                 const text = element.text;
+                const commandLabel = normalizeText(element.element.querySelector('.command-label')?.textContent);
                 let score = 0;
                 // Element UI 菜单的多列文本可能直接拼接为“模式10导出表格…”，
                 // 因此只要求 10 后面不是另一位数字，不能强制必须有空格。
+                if (commandLabel === '模式10') score += 100;
                 if (/^模式\s*10(?!\d)/.test(text)) score += 50;
                 if (/xlsx\+图片\+图片链接/i.test(text)) score += 25;
                 if (/所有列/.test(text)) score += 10;
                 if (element.element.matches('[role="menuitem"], li.el-dropdown-menu__item')) score += 5;
                 return {element: element.element, text, score};
             })
-            .filter((item) => item.score >= 50)
+            .filter((item) => item.score >= 100)
             .sort((a, b) => b.score - a.score)[0]?.element || null;
     }
 
