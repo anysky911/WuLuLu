@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.39
+// @version      1.0.40
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.38';
+    const VERSION = '1.0.40';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -117,9 +117,9 @@
             categories: ['', '', ''],
             ranks: {
                 search: true,
-                live: true,
-                card: true,
-                video: true,
+                live: false,
+                card: false,
+                video: false,
             },
             loadTimeoutSeconds: 30,
             stableWaitSeconds: 3,
@@ -150,6 +150,11 @@
         normalized.loadTimeoutSeconds = clampNumber(normalized.loadTimeoutSeconds, 5, 300, 30);
         normalized.stableWaitSeconds = clampNumber(normalized.stableWaitSeconds, 1, 60, 3);
         normalized.suspendPrice = Boolean(normalized.suspendPrice);
+        // 兼容旧版可多选配置：按榜单顺序保留第一个已选项，并强制只选一个。
+        const selectedRankId = RANKS.find((rank) => normalized.ranks[rank.id])?.id || RANKS[0].id;
+        normalized.ranks = Object.fromEntries(
+            RANKS.map((rank) => [rank.id, rank.id === selectedRankId])
+        );
 
         const maximumDate = yesterdayISO();
         if (!isISODate(normalized.startDate) || normalized.startDate > maximumDate) {
@@ -413,7 +418,7 @@
                 <fieldset>
                     <legend>榜单</legend>
                     <div class="lp-grid-4">
-                        ${RANKS.map((rank) => `<label class="lp-check-option"><input type="checkbox" data-rank="${rank.id}">${rank.label}</label>`).join('')}
+                        ${RANKS.map((rank) => `<label class="lp-radio-option"><input type="radio" name="lp-rank" value="${rank.id}" data-rank="${rank.id}">${rank.label}</label>`).join('')}
                     </div>
                 </fieldset>
                 <fieldset>
@@ -559,7 +564,10 @@
             target.value = state.settings.categories[Number(target.dataset.category)];
             updateCategoryPresetUI();
         } else if (target.dataset.rank) {
-            state.settings.ranks[target.dataset.rank] = target.checked;
+            if (!target.checked) return;
+            RANKS.forEach((rank) => {
+                state.settings.ranks[rank.id] = rank.id === target.dataset.rank;
+            });
         }
         saveSettings();
     }
@@ -1015,7 +1023,7 @@
 
     function validateSettings() {
         const ranks = selectedRanks();
-        if (!ranks.length) throw new Error('请至少勾选一个榜单。');
+        if (!ranks.length) throw new Error('请选择一个榜单。');
         if (state.settings.timeMode === 'natural') {
             if (!isISODate(state.settings.startDate) || !isISODate(state.settings.endDate)) {
                 throw new Error('自然日的开始日期和结束日期必须完整。');
@@ -1092,7 +1100,7 @@
         return withTask(async () => {
             const ranks = selectedRanks();
             setProgress(0, ranks.length);
-            log(`开始一键导出，共 ${ranks.length} 个榜单：${ranks.map((rank) => rank.label).join('、')}`);
+            log(`开始一键导出：${ranks[0].label}`);
 
             for (let index = 0; index < ranks.length; index += 1) {
                 assertRunning();
@@ -1107,7 +1115,7 @@
             }
             setStatus('全部完成');
             setProgress(ranks.length, ranks.length, '完成');
-            log('所有已勾选榜单均已完成导出。', 'success');
+            log('当前所选榜单已完成导出。', 'success');
         });
     }
 
