@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.32
+// @version      1.0.33
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.32';
+    const VERSION = '1.0.33';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -1205,13 +1205,13 @@
         const secondCalendar = getCalendarRoots()[0] || await openNaturalDateCalendar(radio);
         await selectDateFromCalendar(state.settings.endDate, secondCalendar, '结束日期', reopenCalendar);
         log(`已在罗盘日历中选择 ${state.settings.startDate} 至 ${state.settings.endDate}。`, 'success');
-        await closeNaturalDateCalendar();
+        await closeNaturalDateCalendar({required: true, context: '日期设置完成'});
     }
 
-    async function closeNaturalDateCalendar() {
+    async function closeNaturalDateCalendar({required = false, context = '日期设置完成'} = {}) {
         if (!getCalendarRoots().length) {
             log('日期日历已自动关闭。');
-            return;
+            return true;
         }
 
         const view = document.defaultView;
@@ -1234,8 +1234,8 @@
             {description: '日期日历通过 Escape 关闭', timeoutMs: 1800, intervalMs: 120}
         );
         if (closedByEscape) {
-            log('日期设置完成，日历已关闭。', 'success');
-            return;
+            log(`${context}，日历已关闭。`, 'success');
+            return true;
         }
 
         const outside = state.panel?.querySelector('.lp-status-line') || state.panel;
@@ -1248,13 +1248,40 @@
             {description: '日期设置完成后关闭日历', timeoutMs: 3500, intervalMs: 150}
         );
         if (closedByOutside) {
-            log('日期设置完成，日历已关闭。', 'success');
+            log(`${context}，日历已关闭。`, 'success');
             return true;
         }
 
-        // 罗盘某些版本只响应用户的可信点击，脚本事件无法强制关闭日历。
-        // 不在这里终止任务；下一步由用户点击价格“自定义”，该可信点击会关闭日历并打开价格弹窗。
-        log('日期已设置，但日历仍显示；请在下一步手动点击价格带“自定义”，任务将继续等待价格弹窗。', 'warn');
+        // 当前罗盘版本的“更多”本身也是下拉开关。Escape 和外部点击无效时，
+        // 再次点击稳定 value="more" 的 radio 包装，可收起整块菜单与日历。
+        const moreRadio = Array.from(document.querySelectorAll('.ecom-radio-button-input[value="more"]'))
+            .find((element) => {
+                const wrapper = element.closest('label, .ecom-radio-button, [role="radio"]');
+                return isVisible(element) || isVisible(wrapper);
+            });
+        const moreTrigger = moreRadio && (
+            moreRadio.closest('label')
+            || moreRadio.closest('[role="radio"]')
+            || moreRadio.closest('.ecom-radio-button')
+            || moreRadio
+        );
+        if (moreTrigger) {
+            log('外部点击未关闭日历，正在再次点击“更多”收起日期弹层…', 'warn');
+            dispatchPageActivationSequence(moreTrigger, '再次点击“更多”关闭日期日历', {scroll: false});
+            const closedByTrigger = await tryWaitFor(
+                () => getCalendarRoots().length === 0
+                    || {reason: `再次点击“更多”后仍检测到 ${getCalendarRoots().length} 个可见日期日历容器`},
+                {description: '通过“更多”收起日期日历', timeoutMs: 3500, intervalMs: 150}
+            );
+            if (closedByTrigger) {
+                log(`${context}，已通过“更多”收起日历。`, 'success');
+                return true;
+            }
+        }
+
+        const message = `${context}，但日期菜单和日历仍未关闭；为避免遮挡价格或导出弹窗，任务已停止`;
+        if (required) throw new Error(message);
+        log(message, 'warn');
         return false;
     }
 
@@ -1897,6 +1924,11 @@
             return;
         }
 
+        if (getCalendarRoots().length) {
+            log('设置价格前检测到残留日期弹层，先关闭日历。', 'warn');
+            await closeNaturalDateCalendar({required: true, context: '设置价格前'});
+        }
+
         setStatus('正在打开价格弹窗');
         const customPriceButton = await waitFor(
             () => findCustomPriceButton() || {
@@ -1951,7 +1983,32 @@
                 || {reason: '已点击“确定”，但价格范围弹窗仍显示，可能尚未完成提交'},
             {description: '价格范围提交完成'}
         );
+        await waitFor(
+            () => !findCustomPriceDialog()
+                || {reason: '价格弹窗的输入区域仍然可见，尚未完全关闭'},
+            {description: '价格弹窗完全关闭', timeoutMs: 5000}
+        );
+        if (getCalendarRoots().length) {
+            await closeNaturalDateCalendar({required: true, context: '价格设置完成'});
+        }
         log(`价格已设置并确认：最低价 ${values[0] || '不限'}，最高价 ${values[1] || '不限'}。`, 'success');
+    }
+
+    async function ensureFilterOverlaysClosed(context) {
+        const priceDialog = findCustomPriceDialog();
+        if (priceDialog) {
+            throw new Error(`${context}：仍检测到价格范围弹窗，已阻止继续打开导出弹窗`);
+        }
+        if (getCalendarRoots().length) {
+            log(`${context}检测到残留日期弹层，正在关闭…`, 'warn');
+            await closeNaturalDateCalendar({required: true, context});
+        }
+        await waitFor(
+            () => !findCustomPriceDialog() && getCalendarRoots().length === 0
+                || {reason: `仍有价格弹窗或 ${getCalendarRoots().length} 个日期日历容器可见`},
+            {description: `${context}筛选弹层全部关闭`, timeoutMs: 5000}
+        );
+        log(`${context}检查完成：日期和价格弹层均已关闭。`, 'success');
     }
 
     function findCategoryTrigger() {
@@ -2399,6 +2456,7 @@
     }
 
     async function exportCurrentRank(rank) {
+        await ensureFilterOverlaysClosed('打开导出弹窗前');
         log(`[导出 1/4] 查找并点击${rank.label}页面“一键导出”入口…`);
         const beforeDialogs = new Set(getVisibleDialogs());
         const entry = await waitFor(
