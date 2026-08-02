@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         罗盘导出助手
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      1.0.35
+// @version      1.0.36
 // @description  批量设置并导出抖店罗盘搜索榜、直播榜、商品卡榜和短视频榜数据
 // @author       anysky911
 // @match        https://compass.jinritemai.com/*rank-product*
@@ -16,7 +16,7 @@
     'use strict';
 
     const SCRIPT_NAME = '罗盘导出助手';
-    const VERSION = '1.0.35';
+    const VERSION = '1.0.36';
     const STORAGE_KEY = 'compass-rank-export-assistant.settings.v1';
     const PANEL_ID = 'compass-rank-export-assistant-panel';
     const LOG_LIMIT = 220;
@@ -2550,6 +2550,77 @@
         return candidates[0]?.element || null;
     }
 
+    function findExportModeDropdownButton(dialog, exportButton) {
+        if (!exportButton) return null;
+        const buttonGroup = exportButton.closest('.el-button-group, [class*="button-group"]')
+            || exportButton.parentElement;
+        const candidates = queryVisibleAll(
+            'button.el-dropdown__caret-button, button[class*="dropdown"][class*="caret"], [role="button"][class*="dropdown"]',
+            buttonGroup || dialog
+        ).filter((element) => element !== exportButton && !isDisabled(element));
+        if (candidates.length === 1) return candidates[0];
+
+        const exportRect = exportButton.getBoundingClientRect();
+        return candidates
+            .map((element) => {
+                const rect = element.getBoundingClientRect();
+                const sameRow = Math.abs(rect.top - exportRect.top) < Math.max(rect.height, exportRect.height);
+                const rightSide = rect.left >= exportRect.right - 4;
+                const distance = Math.abs(rect.left - exportRect.right);
+                return {element, score: (sameRow ? 20 : 0) + (rightSide ? 12 : 0) - distance};
+            })
+            .sort((a, b) => b.score - a.score)[0]?.element || null;
+    }
+
+    function findExportMode10Option() {
+        const menuRoots = queryVisibleAll([
+            '.el-dropdown-menu',
+            '[role="menu"]',
+            '[class*="dropdown-menu"]',
+            '[class*="dropdown"][class*="popper"]',
+        ].join(','))
+            .filter((element) => !state.panel.contains(element));
+        const candidates = menuRoots.flatMap((root) => queryVisibleAll(
+            'li.el-dropdown-menu__item, [role="menuitem"], li, [data-command], [data-value]',
+            root
+        ));
+        return candidates
+            .filter((element, index, array) => array.indexOf(element) === index)
+            .map((element) => {
+                const text = normalizeText(element.textContent);
+                let score = 0;
+                if (/^模式\s*10(?:\s|$)/.test(text)) score += 50;
+                if (/xlsx\+图片\+图片链接/i.test(text)) score += 25;
+                if (/所有列/.test(text)) score += 10;
+                if (element.matches('[role="menuitem"], li.el-dropdown-menu__item')) score += 5;
+                return {element, text, score};
+            })
+            .filter((item) => item.score >= 50)
+            .sort((a, b) => b.score - a.score)[0]?.element || null;
+    }
+
+    function findExportDialogCloseButton(dialog) {
+        const exact = queryVisibleAll('.el-icon-close.close, .el-dialog__close', dialog)
+            .filter((element) => !isDisabled(element));
+        if (exact.length === 1) return exact[0];
+
+        const dialogRect = dialog.getBoundingClientRect();
+        return queryVisibleAll([
+            '[aria-label*="close" i]',
+            '[aria-label*="关闭"]',
+            '[title*="关闭"]',
+            '[data-action*="close" i]',
+            '[class~="close"]',
+        ].join(','), dialog)
+            .filter((element) => !isDisabled(element))
+            .map((element) => {
+                const rect = element.getBoundingClientRect();
+                const distanceToTopRight = Math.abs(dialogRect.right - rect.right) + Math.abs(rect.top - dialogRect.top);
+                return {element, score: 1000 - distanceToTopRight};
+            })
+            .sort((a, b) => b.score - a.score)[0]?.element || null;
+    }
+
     function exportActionStarted(dialog, button, resourceCount) {
         if (!isVisible(dialog) || !dialog.isConnected) return true;
         if (isDisabled(button) || /loading|spinning/i.test(elementSignal(button))) return true;
@@ -2628,7 +2699,7 @@
         log('全部数据已加载，继续等待表格稳定…');
         await waitForStableResult(exportWorkspace, `${rank.label}导出弹窗表格稳定`);
 
-        const button = await waitFor(
+        const exportButton = await waitFor(
             () => {
                 const found = findModalExportButton(exportWorkspace) || findModalExportButton(dialog);
                 return found && !isDisabled(found)
@@ -2637,14 +2708,61 @@
             },
             {description: `${rank.label}弹窗导出按钮可点击`}
         );
-        log(`[导出 4/4] 已加载 ${loadProgress.loaded}/${loadProgress.total} 条且表格稳定，点击“导出表格”…`);
-        const resourceCount = performance.getEntriesByType('resource').length;
-        clickElement(button, `点击${rank.label}弹窗导出按钮`);
-        await waitFor(
-            () => exportActionStarted(dialog, button, resourceCount)
-                || {reason: '弹窗仍显示、按钮未进入 loading/disabled、未出现成功提示，也未观察到 export/download 请求'},
-            {description: `${rank.label}导出动作开始`}
+
+        const dropdownButton = await waitFor(
+            () => findExportModeDropdownButton(dialog, exportButton) || {
+                reason: '未找到“导出表格”右侧的 el-dropdown__caret-button 下拉按钮',
+            },
+            {description: `${rank.label}导出模式下拉按钮`}
         );
+        log(`[导出 4/4] 已加载 ${loadProgress.loaded}/${loadProgress.total} 条，打开“导出表格”右侧模式菜单…`);
+        clickElement(dropdownButton, '打开导出模式菜单');
+
+        const mode10 = await waitFor(
+            () => findExportMode10Option() || {
+                reason: '下拉菜单中未找到“模式10 xlsx+图片+图片链接[所有列]”',
+            },
+            {description: '导出模式10选项显示'}
+        );
+        log('已定位“模式10：导出表格 xlsx+图片+图片链接[所有列]”，正在选择…');
+        const resourceCount = performance.getEntriesByType('resource').length;
+        clickElement(mode10, `选择${rank.label}导出模式10`);
+        await waitFor(
+            () => !mode10.isConnected || !isVisible(mode10)
+                || {reason: '点击模式10后，导出模式菜单仍显示'},
+            {description: `${rank.label}模式10选择生效`, timeoutMs: 5000}
+        );
+
+        const selectedAt = Date.now();
+        const minimumWaitMs = Math.max(1500, state.settings.stableWaitSeconds * 1000);
+        const actionResult = await waitFor(
+            () => {
+                const observed = exportActionStarted(dialog, exportButton, resourceCount);
+                const elapsed = Date.now() - selectedAt;
+                if (elapsed >= minimumWaitMs) return {observed, elapsed};
+                return {reason: `模式10已选择，正在等待导出动作（${(elapsed / 1000).toFixed(1)} 秒）`};
+            },
+            {description: `${rank.label}模式10导出提交`, timeoutMs: minimumWaitMs + 3000, intervalMs: 200}
+        );
+        log(actionResult.observed
+            ? '模式10导出动作已检测到。'
+            : '模式10已选择；页面未暴露下载请求信号，按菜单已关闭和等待时间判定提交完成。',
+        actionResult.observed ? 'success' : 'warn');
+
+        const closeButton = await waitFor(
+            () => findExportDialogCloseButton(dialog) || {
+                reason: '未找到“联系客服”右侧的 .el-icon-close.close 弹窗关闭按钮',
+            },
+            {description: `${rank.label}导出弹窗右上角关闭按钮`}
+        );
+        log('导出已提交，点击“联系客服”右侧叉号关闭弹窗…');
+        clickElement(closeButton, `关闭${rank.label}导出弹窗`, {scroll: false});
+        await waitFor(
+            () => !dialog.isConnected || !isVisible(dialog)
+                || {reason: '点击右上角叉号后，导出弹窗仍然显示'},
+            {description: `${rank.label}导出弹窗关闭`, timeoutMs: 5000}
+        );
+        log(`${rank.label}导出弹窗已关闭。`, 'success');
     }
 
     state.settings = loadSettings();
