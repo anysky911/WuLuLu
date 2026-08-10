@@ -43,6 +43,7 @@
 // @match        *://zhilechengzhangjitongzhuang.tmall.com/*
 // @match        *://yuanyuangongzhu.tmall.com/*
 // @match        *://detail.tmall.com/*
+// @match        *://feimixiang.tmall.com/*
 // @grant        GM_download
 // @run-at       document-start
 // @grant        unsafeWindow
