@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         生市2.7.4
+// @name         生市2.7.5
 // @namespace    https://github.com/anysky911/WuLuLu
 // @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
-// @version      2.7.4
-// @description  补齐童装裤子（新）三级类目，切换原生类目后自动记录参数，稳定续载并导出表格
+// @version      2.7.5
+// @description  按原菜单截图精简童装类目，内置裤子（新）参数，稳定续载并导出表格
 // @match        https://sycm.taobao.com/*
 // @grant        none
 // @run-at       document-idle
@@ -21,85 +21,10 @@
       '工装裤',
       '运动裤卫裤',
       '打底裤'
-    ]),
-    '帽子/围巾/口罩/手套/耳套/脚套': pendingCategories([
-      '帽子',
-      '围巾',
-      '手套',
-      '多件套 帽子、围巾、手套等组合',
-      '防抓手套/护肘/护膝',
-      '口罩',
-      '耳套/耳暖',
-      '袖套/儿童冰袖'
-    ]),
-    '外套/夹克/大衣': pendingCategories([
-      '夹克/皮衣',
-      '呢大衣',
-      '普通外套',
-      '风衣',
-      '西服/小西装',
-      '皮草/仿皮草'
-    ]),
-    '儿童旗袍/唐装/民族服装': pendingCategories([
-      '唐装',
-      '旗袍',
-      '汉服'
-    ]),
-    '儿童家居服': pendingCategories([
-      '家居袍/睡袍',
-      '家居服连体衣',
-      '家居服上装',
-      '家居裤/睡裤',
-      '家居服套装',
-      '家居裙/睡裙',
-      '浴袍'
-    ]),
-    '儿童内衣裤': [
-      { name: '内衣套装', params: null },
-      { name: '保暖上装', params: null },
-      { name: '内裤', params: { parentCateId: '121380002', cateId: '121408006', cateFlag: '2' } },
-      { name: '保暖裤', params: null },
-      { name: '儿童日抛内裤', params: null }
-    ],
-    '裙子(新)': pendingCategories([
-      '连衣裙',
-      '半身裙'
-    ]),
-    '儿童泳装': pendingCategories([
-      '泳帽',
-      '泳衣裤'
-    ]),
-    '肚兜/肚围/护脐带': pendingCategories([
-      '肚兜',
-      '肚围/护脐带'
-    ]),
-    '羽绒服饰/羽绒内胆': pendingCategories([
-      '羽绒连体衣',
-      '羽绒马甲',
-      '羽绒内胆',
-      '羽绒服',
-      '羽绒裤'
-    ]),
-    '儿童户外服': pendingCategories([
-      '儿童冲锋衣',
-      '儿童滑雪服',
-      '儿童运动套装',
-      '儿童抓绒衣',
-      '儿童软壳裤',
-      '儿童速干T恤',
-      '儿童速干衬衫',
-      '儿童运动裤',
-      '儿童皮肤衣/防晒衣',
-      '儿童软壳衣',
-      '儿童冲锋裤',
-      '儿童运动衣',
-      '儿童速干裤',
-      '儿童滑雪裤'
     ])
   };
 
   const CHILDREN_LEVEL2_NAMES = [
-    '其它',
     '帽子/围巾/口罩/手套/耳套/脚套',
     '儿童袜子(0-16岁)',
     '卫衣/绒衫',
@@ -108,69 +33,21 @@
     '披风/斗篷',
     '棉袄/棉服',
     '连身衣/爬服/哈衣',
-    '毛衣/针织衫',
-    '套装',
-    '外套/夹克/大衣',
-    '亲子装/亲子时装',
-    'T恤',
-    '裤子',
-    '婴儿礼盒',
-    '校服/园服',
-    '反穿衣/罩衣',
-    '儿童旗袍/唐装/民族服装',
-    '儿童家居服',
-    '背心吊带',
-    '儿童内衣裤',
-    '裙子(新)',
-    '儿童配饰',
-    '包包',
-    '儿童演出服',
-    '儿童泳装',
-    '肚兜/肚围/护脐带',
-    '发育内衣/抹胸',
-    '儿童礼服',
-    '羽绒服饰/羽绒内胆',
-    '儿童户外服',
-    '儿童牛仔',
-    '儿童POLO衫',
-    '儿童双肩包',
-    '裤子（新）',
-    '儿童羊绒衫'
+    '裤子（新）'
   ];
 
   const CHILDREN_LEVEL2 = CHILDREN_LEVEL2_NAMES.map(name => {
-    if (CHILDREN_LEVEL3[name]) return { name, children: CHILDREN_LEVEL3[name] };
+    if (name === '裤子（新）') {
+      return {
+        name,
+        params: { parentCateId: '50008165', cateId: '202159318', cateFlag: '2' },
+        children: CHILDREN_LEVEL3[name]
+      };
+    }
     return { name, params: null };
   });
 
   const CATEGORY_TREE = [
-    {
-      name: '女装/女士精品',
-      children: [
-        { name: '半身裙', params: { parentCateId: '16', cateId: '1623', cateFlag: '2' } },
-        { name: '毛衣', params: { parentCateId: '16', cateId: '162103', cateFlag: '2' } },
-        { name: '牛仔裤', params: { parentCateId: '16', cateId: '162205', cateFlag: '2' } },
-        { name: 'T恤', params: { parentCateId: '16', cateId: '50000671', cateFlag: '2' } },
-        { name: '毛针织衫', params: { parentCateId: '16', cateId: '50000697', cateFlag: '2' } },
-        { name: '套装/学生校服/工作制服', params: null },
-        { name: '衬衫', params: null },
-        { name: '蕾丝衫/雪纺衫', params: null },
-        {
-          name: '裤子',
-          children: [
-            { name: '休闲裤', params: null },
-            { name: '打底裤', params: null },
-            { name: '西装裤/正装裤', params: null },
-            { name: '棉裤/羽绒裤', params: null },
-            { name: '背带裤', params: null },
-            { name: '皮裤', params: null },
-            { name: '裙裤', params: null },
-            { name: '时尚工装裤', params: { parentCateId: '1622', cateId: '202156538', cateFlag: '2' } },
-            { name: '短裤', params: { parentCateId: '1622', cateId: '202174802', cateFlag: '2' } }
-          ]
-        }
-      ]
-    },
     {
       name: '童装/婴儿装/亲子装',
       children: CHILDREN_LEVEL2
@@ -271,33 +148,17 @@
     return [fmtDate(start), fmtDate(end)];
   }
 
-  function upsertCategory(path, params) {
-    if (!Array.isArray(path) || path.length < 2 || !params || !params.parentCateId || !params.cateId) return false;
+  function upsertCategory(path, params, overwrite = true) {
+    if (!Array.isArray(path) || path.length < 2 || path.length > 3 || !params || !params.parentCateId || !params.cateId) return false;
 
-    let level1 = CATEGORY_TREE.find(item => item.name === path[0]);
-    if (!level1) {
-      level1 = { name: path[0], children: [] };
-      CATEGORY_TREE.push(level1);
-    }
+    const level1 = CATEGORY_TREE.find(item => item.name === path[0]);
+    const level2 = level1 && (level1.children || []).find(item => item.name === path[1]);
+    const item = path.length === 3
+      ? level2 && (level2.children || []).find(child => child.name === path[2])
+      : level2;
+    if (!item) return false;
 
-    let level2 = (level1.children || []).find(item => item.name === path[1]);
-    if (!level2) {
-      level2 = { name: path[1], params: null };
-      level1.children.push(level2);
-    }
-
-    if (path.length >= 3) {
-      if (!level2.children) level2.children = [];
-      let level3 = level2.children.find(item => item.name === path[2]);
-      if (!level3) {
-        level3 = { name: path[2], params: null };
-        level2.children.push(level3);
-      }
-      level3.params = params;
-    } else {
-      level2.params = params;
-    }
-
+    if (overwrite || !item.params) item.params = params;
     return true;
   }
 
@@ -305,7 +166,9 @@
     try {
       const saved = JSON.parse(localStorage.getItem(CATEGORY_CACHE_KEY) || '[]');
       if (!Array.isArray(saved)) return;
-      saved.forEach(item => upsertCategory(item.path, item.params));
+      saved.forEach(item => {
+        if (item) upsertCategory(item.path, item.params, false);
+      });
     } catch (error) {
       console.warn('[生意参谋助手] 读取已记住类目失败', error);
     }
@@ -393,9 +256,12 @@
   }
 
   function getSelectedCategory() {
-    const l1 = CATEGORY_TREE[Number($('#sycm-level1').value)];
-    const l2 = l1 && l1.children ? l1.children[Number($('#sycm-level2').value)] : null;
-    const l3 = l2 && l2.children ? l2.children[Number($('#sycm-level3').value)] : null;
+    const level1Index = $('#sycm-level1').value;
+    const level2Index = $('#sycm-level2').value;
+    const level3Index = $('#sycm-level3').value;
+    const l1 = level1Index !== '' ? CATEGORY_TREE[Number(level1Index)] : null;
+    const l2 = l1 && l1.children && level2Index !== '' ? l1.children[Number(level2Index)] : null;
+    const l3 = l2 && l2.children && level3Index !== '' ? l2.children[Number(level3Index)] : null;
 
     if (l3) return { item: l3, path: `${l1.name} > ${l2.name} > ${l3.name}` };
     if (l2) return { item: l2, path: `${l1.name} > ${l2.name}` };
@@ -1092,7 +958,8 @@
 
     function renderLevel3(selectedIndex = '') {
       const l1 = CATEGORY_TREE[Number($('#sycm-level1').value)];
-      const l2 = l1 && l1.children ? l1.children[Number($('#sycm-level2').value)] : null;
+      const level2Index = $('#sycm-level2').value;
+      const l2 = l1 && l1.children && level2Index !== '' ? l1.children[Number(level2Index)] : null;
       const children = l2 && l2.children ? l2.children : [];
 
       $('#sycm-level3').innerHTML =
