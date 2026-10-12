@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         生市2.7.5
+// @name         生市2.7.6
 // @namespace    https://github.com/anysky911/WuLuLu
 // @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
-// @version      2.7.5
-// @description  按原菜单截图精简童装类目，内置裤子（新）参数，稳定续载并导出表格
+// @version      2.7.6
+// @description  按指定清单保留10个童装二级类目和9个三级类目，内置裤子参数，稳定续载并导出表格
 // @match        https://sycm.taobao.com/*
 // @grant        none
 // @run-at       document-idle
@@ -16,34 +16,42 @@
   const pendingCategories = names => names.map(name => ({ name, params: null }));
 
   const CHILDREN_LEVEL3 = {
-    '裤子（新）': pendingCategories([
-      '休闲裤',
-      '工装裤',
-      '运动裤卫裤',
-      '打底裤'
+    '儿童户外服': pendingCategories([
+      '儿童速干T恤',
+      '儿童速干衬衫',
+      '儿童冲锋衣',
+      '儿童抓绒衣',
+      '儿童皮肤衣/防晒衣'
+    ]),
+    '儿童牛仔': pendingCategories([
+      '儿童牛仔外套',
+      '儿童牛仔裙',
+      '儿童牛仔衬衫',
+      '儿童牛仔裤'
     ])
   };
 
   const CHILDREN_LEVEL2_NAMES = [
-    '帽子/围巾/口罩/手套/耳套/脚套',
-    '儿童袜子(0-16岁)',
-    '卫衣/绒衫',
-    '马甲',
     '衬衫',
-    '披风/斗篷',
-    '棉袄/棉服',
-    '连身衣/爬服/哈衣',
-    '裤子（新）'
+    'T恤',
+    '儿童户外服',
+    '儿童POLO衫',
+    '儿童牛仔',
+    '外套/夹克/大衣',
+    '卫衣',
+    '毛衣',
+    '裤子',
+    '半身裙'
   ];
 
   const CHILDREN_LEVEL2 = CHILDREN_LEVEL2_NAMES.map(name => {
-    if (name === '裤子（新）') {
+    if (name === '裤子') {
       return {
         name,
-        params: { parentCateId: '50008165', cateId: '202159318', cateFlag: '2' },
-        children: CHILDREN_LEVEL3[name]
+        params: { parentCateId: '50008165', cateId: '202159318', cateFlag: '2' }
       };
     }
+    if (CHILDREN_LEVEL3[name]) return { name, children: CHILDREN_LEVEL3[name], params: null };
     return { name, params: null };
   });
 
@@ -148,7 +156,24 @@
     return [fmtDate(start), fmtDate(end)];
   }
 
+  function normalizeCategoryPath(path) {
+    if (!Array.isArray(path)) return [];
+    const normalized = path.map(name => typeof name === 'string'
+      ? name.trim().replace(/（/g, '(').replace(/）/g, ')')
+      : '');
+    if (normalized[0] !== '童装/婴儿装/亲子装') return normalized;
+
+    if (normalized.length === 3 && normalized[1] === '裙子(新)' && normalized[2] === '半身裙') {
+      return [normalized[0], '半身裙'];
+    }
+
+    const aliases = { '卫衣/绒衫': '卫衣', '毛衣/针织衫': '毛衣', '裤子(新)': '裤子' };
+    normalized[1] = aliases[normalized[1]] || normalized[1];
+    return normalized;
+  }
+
   function upsertCategory(path, params, overwrite = true) {
+    path = normalizeCategoryPath(path);
     if (!Array.isArray(path) || path.length < 2 || path.length > 3 || !params || !params.parentCateId || !params.cateId) return false;
 
     const level1 = CATEGORY_TREE.find(item => item.name === path[0]);
@@ -157,6 +182,8 @@
       ? level2 && (level2.children || []).find(child => child.name === path[2])
       : level2;
     if (!item) return false;
+
+    if (item.name === '裤子' && item.params && ['parentCateId', 'cateId', 'cateFlag'].some(key => params[key] !== item.params[key])) return false;
 
     if (overwrite || !item.params) item.params = params;
     return true;
@@ -186,7 +213,7 @@
       const title = item.getAttribute('title') || '';
       return title.split('>').map(part => part.trim()).filter(Boolean).length >= 2;
     });
-    const path = header ? header.getAttribute('title').split('>').map(item => item.trim()).filter(Boolean) : [];
+    const path = normalizeCategoryPath(header ? header.getAttribute('title').split('>').map(item => item.trim()).filter(Boolean) : []);
 
     if (!upsertCategory(path, params)) return false;
 
