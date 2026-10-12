@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         生市2.7.3
+// @name         生市2.7.4
 // @namespace    https://github.com/anysky911/WuLuLu
 // @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
-// @version      2.7.3
-// @description  切换原生类目后即时记录参数，稳定加载并从下一未加载页续载导出表格
+// @version      2.7.4
+// @description  补齐童装裤子（新）三级类目，切换原生类目后自动记录参数，稳定续载并导出表格
 // @match        https://sycm.taobao.com/*
 // @grant        none
 // @run-at       document-idle
@@ -16,6 +16,12 @@
   const pendingCategories = names => names.map(name => ({ name, params: null }));
 
   const CHILDREN_LEVEL3 = {
+    '裤子（新）': pendingCategories([
+      '休闲裤',
+      '工装裤',
+      '运动裤卫裤',
+      '打底裤'
+    ]),
     '帽子/围巾/口罩/手套/耳套/脚套': pendingCategories([
       '帽子',
       '围巾',
