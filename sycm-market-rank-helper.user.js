@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         生市2.7.6
+// @name         生市2.7.7
 // @namespace    https://github.com/anysky911/WuLuLu
 // @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
-// @version      2.7.6
-// @description  按指定清单保留10个童装二级类目和9个三级类目，内置裤子参数，稳定续载并导出表格
+// @version      2.7.7
+// @description  二级和三级类目支持收藏置顶并记住收藏状态，稳定续载并导出表格
 // @match        https://sycm.taobao.com/*
 // @grant        none
 // @run-at       document-idle
@@ -65,6 +65,8 @@
   const AUTO_RUN_KEY = 'sycm_auto_run_after_apply_v5';
   const TARGET_URL_KEY = 'sycm_auto_target_url_v3';
   const CATEGORY_CACHE_KEY = 'sycm_confirmed_category_params_v1';
+  const CATEGORY_FAVORITES_KEY = 'sycm_favorite_categories_v1';
+  let categoryFavorites = loadCategoryFavorites();
   let categoryRecordTimer = 0;
   let lastCategoryRecordKey = '';
 
@@ -189,6 +191,55 @@
     return true;
   }
 
+  function loadCategoryFavorites() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CATEGORY_FAVORITES_KEY) || '[]');
+      return new Set(Array.isArray(saved) ? saved.filter(key => typeof key === 'string') : []);
+    } catch (error) {
+      console.warn('[生意参谋助手] 读取收藏类目失败', error);
+      return new Set();
+    }
+  }
+
+  function isCategoryFavorite(path) {
+    return categoryFavorites.has(JSON.stringify(normalizeCategoryPath(path)));
+  }
+
+  function toggleCategoryFavorite(path) {
+    path = normalizeCategoryPath(path);
+    if (path.length < 2 || path.length > 3) return false;
+    const level1 = CATEGORY_TREE.find(item => item.name === path[0]);
+    const level2 = level1 && (level1.children || []).find(item => item.name === path[1]);
+    const item = path.length === 3
+      ? level2 && (level2.children || []).find(child => child.name === path[2])
+      : level2;
+    if (!item) return false;
+
+    const key = JSON.stringify(path);
+    const next = new Set(categoryFavorites);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+
+    try {
+      localStorage.setItem(CATEGORY_FAVORITES_KEY, JSON.stringify(Array.from(next)));
+    } catch (error) {
+      console.warn('[生意参谋助手] 保存收藏类目失败', error);
+      setStatus('收藏保存失败，请检查浏览器存储权限');
+      return false;
+    }
+
+    categoryFavorites = next;
+    return true;
+  }
+
+  function sortCategoryOptions(items, parentPath) {
+    return items.map((item, index) => ({
+      item,
+      index,
+      favorite: isCategoryFavorite([...parentPath, item.name])
+    })).sort((a, b) => Number(b.favorite) - Number(a.favorite) || a.index - b.index);
+  }
+
   function loadRememberedCategories() {
     try {
       const saved = JSON.parse(localStorage.getItem(CATEGORY_CACHE_KEY) || '[]');
@@ -290,8 +341,8 @@
     const l2 = l1 && l1.children && level2Index !== '' ? l1.children[Number(level2Index)] : null;
     const l3 = l2 && l2.children && level3Index !== '' ? l2.children[Number(level3Index)] : null;
 
-    if (l3) return { item: l3, path: `${l1.name} > ${l2.name} > ${l3.name}` };
-    if (l2) return { item: l2, path: `${l1.name} > ${l2.name}` };
+    if (l3) return { item: l3, path: `${l1.name} > ${l2.name} > ${l3.name}`, parts: [l1.name, l2.name, l3.name] };
+    if (l2) return { item: l2, path: `${l1.name} > ${l2.name}`, parts: [l1.name, l2.name] };
     return null;
   }
 
@@ -820,10 +871,16 @@
         <select id="sycm-level1"></select>
 
         <label>二级类目</label>
-        <select id="sycm-level2"></select>
+        <div class="sycm-category-row">
+          <select id="sycm-level2"></select>
+          <button type="button" class="sycm-favorite" id="sycm-favorite-level2" title="收藏当前二级类目" aria-label="收藏当前二级类目" aria-pressed="false" disabled>&#9734;</button>
+        </div>
 
         <label>三级类目</label>
-        <select id="sycm-level3"></select>
+        <div class="sycm-category-row">
+          <select id="sycm-level3"></select>
+          <button type="button" class="sycm-favorite" id="sycm-favorite-level3" title="收藏当前三级类目" aria-label="收藏当前三级类目" aria-pressed="false" disabled>&#9734;</button>
+        </div>
 
         <div class="sycm-param" id="sycm-param"></div>
 
@@ -906,6 +963,30 @@
         cursor: pointer;
       }
       #sycm-helper-panel .sycm-body { padding: 12px; }
+      #sycm-helper-panel .sycm-category-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 32px;
+        gap: 6px;
+        align-items: center;
+      }
+      #sycm-helper-panel .sycm-category-row select { min-width: 0; }
+      #sycm-helper-panel .sycm-favorite {
+        width: 32px;
+        height: 30px;
+        padding: 0;
+        font-size: 20px;
+        line-height: 1;
+      }
+      #sycm-helper-panel .sycm-favorite[aria-pressed="true"] {
+        color: #996500;
+        border-color: #e8c65b;
+        background: #fff8db;
+      }
+      #sycm-helper-panel .sycm-favorite:disabled {
+        color: #aeb6c2;
+        background: #f5f6f8;
+        cursor: not-allowed;
+      }
       #sycm-helper-panel label {
         display: block;
         margin: 8px 0 4px;
@@ -974,9 +1055,9 @@
 
       $('#sycm-level2').innerHTML =
         `<option value="">请选择二级类目</option>` +
-        children.map((item, index) => {
+        sortCategoryOptions(children, l1 ? [l1.name] : []).map(({ item, index, favorite }) => {
           const suffix = !item.params && !item.children ? '（需原菜单确认）' : '';
-          return `<option value="${index}">${item.name}${suffix}</option>`;
+          return `<option value="${index}">${favorite ? '\u2605 ' : ''}${item.name}${suffix}</option>`;
         }).join('');
 
       $('#sycm-level2').value = selectedIndex === '' ? '' : String(selectedIndex);
@@ -991,16 +1072,32 @@
 
       $('#sycm-level3').innerHTML =
         `<option value="">无/请选择三级类目</option>` +
-        children.map((item, index) => {
+        sortCategoryOptions(children, l1 && l2 ? [l1.name, l2.name] : []).map(({ item, index, favorite }) => {
           const suffix = !item.params ? '（需原菜单确认）' : '';
-          return `<option value="${index}">${item.name}${suffix}</option>`;
+          return `<option value="${index}">${favorite ? '\u2605 ' : ''}${item.name}${suffix}</option>`;
         }).join('');
 
       $('#sycm-level3').value = selectedIndex === '' ? '' : String(selectedIndex);
       updateCategoryParam();
     }
 
+    function updateFavoriteButtons() {
+      const selected = getSelectedCategory();
+      [2, 3].forEach(level => {
+        const button = $(`#sycm-favorite-level${level}`);
+        const path = selected && selected.parts.length >= level ? selected.parts.slice(0, level) : null;
+        const favorite = !!path && isCategoryFavorite(path);
+        const label = `${favorite ? '取消收藏' : '收藏'}当前${level === 2 ? '二' : '三'}级类目`;
+        button.disabled = !path;
+        button.textContent = favorite ? '\u2605' : '\u2606';
+        button.title = label;
+        button.setAttribute('aria-label', label);
+        button.setAttribute('aria-pressed', String(favorite));
+      });
+    }
+
     function updateCategoryParam() {
+      updateFavoriteButtons();
       const selected = getSelectedCategory();
 
       if (!selected || !selected.item) {
@@ -1065,6 +1162,17 @@
     $('#sycm-level1').addEventListener('change', () => renderLevel2());
     $('#sycm-level2').addEventListener('change', () => renderLevel3());
     $('#sycm-level3').addEventListener('change', updateCategoryParam);
+    [2, 3].forEach(level => {
+      $(`#sycm-favorite-level${level}`).addEventListener('click', () => {
+        const selected = getSelectedCategory();
+        if (!selected || selected.parts.length < level) return;
+        if (!toggleCategoryFavorite(selected.parts.slice(0, level))) return;
+        const level2Index = $('#sycm-level2').value;
+        const level3Index = $('#sycm-level3').value;
+        renderLevel2(level2Index);
+        renderLevel3(level3Index);
+      });
+    });
     $('#sycm-dateType').addEventListener('change', e => setDateType(e.target.value));
     $('#sycm-month').addEventListener('change', updateMonthTip);
     $('#sycm-apply').addEventListener('click', () => applyQuery(false));
