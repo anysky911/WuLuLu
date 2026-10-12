@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         生市2.7.7
+// @name         生市2.7.8
 // @namespace    https://github.com/anysky911/WuLuLu
 // @updateURL    https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/anysky911/WuLuLu/main/sycm-market-rank-helper.user.js
-// @version      2.7.7
+// @version      2.7.8
 // @description  二级和三级类目支持收藏置顶并记住收藏状态，稳定续载并导出表格
 // @match        https://sycm.taobao.com/*
 // @grant        none
@@ -23,12 +23,12 @@
       '儿童抓绒衣',
       '儿童皮肤衣/防晒衣'
     ]),
-    '儿童牛仔': pendingCategories([
-      '儿童牛仔外套',
-      '儿童牛仔裙',
-      '儿童牛仔衬衫',
-      '儿童牛仔裤'
-    ])
+    '儿童牛仔': [
+      { name: '儿童牛仔外套', params: null },
+      { name: '儿童牛仔裙', params: { parentCateId: '201311102', cateId: '201315501', cateFlag: '2' } },
+      { name: '儿童牛仔衬衫', params: { parentCateId: '201311102', cateId: '201315601', cateFlag: '2' } },
+      { name: '儿童牛仔裤', params: { parentCateId: '201311102', cateId: '201315701', cateFlag: '2' } }
+    ]
   };
 
   const CHILDREN_LEVEL2_NAMES = [
