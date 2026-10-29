@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         生意参谋新品分析下载助手-批量续跑修复版
 // @namespace    https://github.com/anysky911/WuLuLu
-// @version      0.6.1
-// @description  生意参谋新品分析：批量选择店铺、切换30天、点击右下角下载，支持页面刷新后继续下一家
+// @version      0.7.0
+// @description  生意参谋新品分析：批量续跑、店铺加日期命名、下载完成后统一复制到授权共享目录的日期文件夹
 // @author       anysky911
 // @homepageURL  https://github.com/anysky911/WuLuLu
 // @supportURL   https://github.com/anysky911/WuLuLu/issues
@@ -12,11 +12,20 @@
 // @match        https://sycm.taobao.com/*
 // @grant        GM_addStyle
 // @grant        unsafeWindow
+// @grant        GM_download
+// @grant        GM_xmlhttpRequest
+// @connect      *
+// @noframes
 // @run-at       document-idle
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  // 发布新修改时必须同时递增此版本和元数据 @version，保留原更新地址。
+  const VERSION = '0.7.0';
+  const ARCHIVE_ROOT = String.raw`\\192.168.1.252\work\男童店\链接数据`;
+  const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
   const CONFIG = {
     fileExtension: 'xls',
@@ -30,7 +39,6 @@
     waitAfterSelectShopMs: 3500,
     waitAfterSelect30DaysMs: 2500,
     waitAfterScrollBottomMs: 800,
-    waitAfterDownloadClickMs: 2600,
 
     randomWaitMinMs: 10000,
     randomWaitMaxMs: 15000,
@@ -58,13 +66,15 @@
 
   const PANEL_ID = 'sycm-download-helper-center';
   const COMPLETE_POPUP_ID = 'sycm-download-complete-popup';
-  const DOWNLOAD_RENAME_EVENT = 'sycm-helper-set-download-filename';
   const BATCH_STATE_KEY = 'sycm-helper-batch-state-fixed-v6';
 
   const state = {
     running: false,
     stopRequested: false,
-    currentDownloadFileName: '',
+    activeDownload: null,
+    archiveHandle: null,
+    archiving: false,
+    batchId: '',
     lastShopName: '',
   };
 
@@ -102,11 +112,21 @@
   }
 
   function sanitizeFileName(name) {
-    return norm(name).replace(/[\\/:*?"<>|]/g, '_') || '生意参谋新品分析';
+    let safe = norm(name).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 120).replace(/[. ]+$/g, '');
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(safe)) safe = '_' + safe;
+    return safe || '生意参谋新品分析';
   }
 
-  function buildDownloadFileName(shopName) {
-    return `${sanitizeFileName(shopName)}.${CONFIG.fileExtension}`;
+  function currentDate(now = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(now);
+    const part = (type) => parts.find((p) => p.type === type).value;
+    return `${part('year')}-${part('month')}-${part('day')}`;
+  }
+
+  function buildDownloadFileName(shopName, date = currentDate(), extension = CONFIG.fileExtension) {
+    return `${sanitizeFileName(shopName)}${date}.${extension}`;
   }
 
   function readBatchState() {
@@ -139,6 +159,7 @@
   function startBatchState(shops, startIndex = 0) {
     return writeBatchState({
       active: true,
+      batchId: crypto.randomUUID(),
       shops,
       index: startIndex,
       completed: 0,
@@ -356,7 +377,7 @@
     panel.id = PANEL_ID;
 
     panel.innerHTML = `
-      <div class="sycm-helper-title">新品分析下载助手</div>
+      <div class="sycm-helper-title">新品分析下载助手 v${VERSION}</div>
 
       <input class="sycm-helper-input"
              type="text"
@@ -370,6 +391,11 @@
         <button class="sycm-helper-clear" type="button">清空日志</button>
       </div>
 
+      <div class="sycm-helper-buttons">
+        <button class="sycm-helper-pick-folder" type="button">选择归档目录</button>
+        <button class="sycm-helper-copy" type="button">补拷贝 / 授权续跑</button>
+      </div>
+      <div class="sycm-helper-archive-status">首次请选择：${ARCHIVE_ROOT}</div>
       <textarea class="sycm-helper-shop-list"
                 placeholder="每行一个店铺名">${SHOP_NAMES.join('\n')}</textarea>
 
@@ -387,7 +413,7 @@
         return;
       }
 
-      await runShopList([shopName], 0, false, true);
+      await runShopList([shopName]);
     });
 
     panel.querySelector('.sycm-helper-run-all').addEventListener('click', async () => {
@@ -403,13 +429,17 @@
         return;
       }
 
-      await runShopList(shops, 0, false, false);
+      await runShopList([...new Set(shops)]);
     });
+
+    panel.querySelector('.sycm-helper-pick-folder').addEventListener('click', chooseArchiveDirectory);
+    panel.querySelector('.sycm-helper-copy').addEventListener('click', authorizeAndCopy);
 
     panel.querySelector('.sycm-helper-stop').addEventListener('click', () => {
       state.stopRequested = true;
       stopBatchState();
-      updateStatus('收到停止请求，当前步骤结束后停止');
+      state.activeDownload?.controller.abort();
+      updateStatus('收到停止请求，当前步骤结束后停止；已取得表格仍可补拷贝');
     });
 
     panel.querySelector('.sycm-helper-clear').addEventListener('click', () => {
@@ -536,6 +566,13 @@
       cursor: not-allowed;
     }
 
+    #${PANEL_ID} .sycm-helper-archive-status {
+      margin: 6px 0;
+      font-size: 12px;
+      color: #4d5a70;
+      overflow-wrap: anywhere;
+    }
+
     #${PANEL_ID} .sycm-helper-status {
       min-height: 20px;
       margin-bottom: 8px;
@@ -609,150 +646,291 @@
     }
   `);
 
+  let archiveDBPromise;
+  function archiveDB(storeName, mode, operation) {
+    if (!archiveDBPromise) {
+      archiveDBPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open('sycm-download-archive-v1', 1);
+        request.onupgradeneeded = () => {
+          request.result.createObjectStore('settings');
+          request.result.createObjectStore('files', { keyPath: 'id' });
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('归档缓存被其他页面占用，请关闭旧页面'));
+      });
+    }
+    return archiveDBPromise.then((db) => new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeName, mode);
+      const request = operation(transaction.objectStore(storeName));
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onerror = () => reject(transaction.error || request.error);
+      transaction.onabort = () => reject(transaction.error || new Error('缓存写入中断'));
+    }));
+  }
+
+  async function hasArchivePermission() {
+    return state.archiveHandle &&
+      await state.archiveHandle.queryPermission({ mode: 'readwrite' }) === 'granted';
+  }
+
+  async function refreshArchiveStatus() {
+    const records = await archiveDB('files', 'readonly', (store) => store.getAll());
+    const pending = records.filter((record) => !record.archived).length;
+    const element = document.querySelector(`#${PANEL_ID} .sycm-helper-archive-status`);
+    if (element) element.textContent =
+      `${state.archiveHandle ? `所选目录：${state.archiveHandle.name}` : `请选择：${ARCHIVE_ROOT}`}；待拷贝 ${pending} 份`;
+  }
+
+  async function chooseArchiveDirectory() {
+    if (state.running || state.archiving) return updateStatus('请在任务结束后更换目录', true);
+    try {
+      if (typeof pageWindow.showDirectoryPicker !== 'function') {
+        throw new Error('请使用支持目录授权的 Chrome 或 Edge 浏览器');
+      }
+      // 必须直接在按钮点击中调用；网页无法通过 UNC 路径静默获得目录权限。
+      const handle = await pageWindow.showDirectoryPicker({ id: 'sycm-archive', mode: 'readwrite' });
+      if (handle.name !== '链接数据') throw new Error(`请选择 ${ARCHIVE_ROOT} 中的“链接数据”目录`);
+      await archiveDB('settings', 'readwrite', (store) => store.put(handle, 'directory'));
+      state.archiveHandle = handle;
+      await refreshArchiveStatus();
+      updateStatus('目录已授权。请确认所选“链接数据”位于指定共享路径；现在可以开始下载');
+    } catch (error) {
+      updateStatus(error.name === 'AbortError' ? '已取消选择目录' : error.message, true);
+    }
+  }
+
+  async function authorizeAndCopy() {
+    if (state.running || state.archiving) return updateStatus('已有任务正在运行，请稍候', true);
+    try {
+      if (!state.archiveHandle) return await chooseArchiveDirectory();
+      // 用户点击时申请权限，刷新后的自动续跑只查询权限，不触发弹窗。
+      if (await state.archiveHandle.requestPermission({ mode: 'readwrite' }) !== 'granted') {
+        throw new Error('尚未获得目录写入权限');
+      }
+      state.stopRequested = false;
+      const copied = await copyPendingFiles();
+      updateStatus(`补拷贝完成：${copied} 份`);
+      const batch = readBatchState();
+      if (batch?.active && !batch.stopRequested && batch.batchId) {
+        await runShopList(batch.shops, batch.index || 0, true);
+      }
+    } catch (error) {
+      updateStatus(`拷贝未完成：${error.message}；缓存已保留，可重试`, true);
+    }
+  }
+
+  async function digestBlob(blob) {
+    const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+    return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function availableArchiveFile(directory, record) {
+    const hash = await digestBlob(record.blob);
+    for (let number = 1; number <= 999; number += 1) {
+      const name = number === 1 ? record.filename : record.filename.replace(/(\.[^.]+)$/, ` (${number})$1`);
+      try {
+        const handle = await directory.getFileHandle(name);
+        const existing = await handle.getFile();
+        // 同内容不重复拷贝；同名不同内容保留两份，不覆盖已存在的表格。
+        if (existing.size === record.blob.size && await digestBlob(existing) === hash) {
+          return { handle, name, exists: true, hash };
+        }
+      } catch (error) {
+        if (error.name !== 'NotFoundError') throw error;
+        return { handle: await directory.getFileHandle(name, { create: true }), name, exists: false, hash };
+      }
+    }
+    throw new Error(`同名文件过多：${record.filename}`);
+  }
+
+  async function copyPendingFiles() {
+    if (state.archiving) throw new Error('正在归档，请稍候');
+    state.archiving = true;
+    let copied = 0;
+    try {
+      if (!await hasArchivePermission()) throw new Error('请点击“补拷贝 / 授权续跑”授予目录写入权限');
+      const records = await archiveDB('files', 'readonly', (store) => store.getAll());
+      for (const record of records.filter((item) => !item.archived)) {
+        if (state.stopRequested) throw new Error('用户已停止');
+        if (!record.blob?.size) throw new Error(`缓存表格为空：${record.filename}`);
+        // 首次归档按拷贝当天建目录；重试沿用已记录的日期。
+        if (!record.archiveDate) {
+          record.archiveDate = currentDate();
+          await archiveDB('files', 'readwrite', (store) => store.put(record));
+        }
+        updateStatus(`正在归档：${record.archiveDate} / ${record.filename}`);
+        const directory = await state.archiveHandle.getDirectoryHandle(record.archiveDate, { create: true });
+        const target = await availableArchiveFile(directory, record);
+        if (!target.exists) {
+          const writable = await target.handle.createWritable();
+          try {
+            await writable.write(record.blob);
+            await writable.close();
+          } catch (error) {
+            await writable.abort().catch(() => {});
+            throw error;
+          }
+        }
+        if (await digestBlob(await target.handle.getFile()) !== target.hash) {
+          throw new Error(`拷贝校验失败：${target.name}`);
+        }
+        record.archived = true;
+        record.archiveName = target.name;
+        // 本地下载失败的文件保留缓存，以便恢复本地下载。
+        if (record.localSaved) record.blob = null;
+        await archiveDB('files', 'readwrite', (store) => store.put(record));
+        copied += 1;
+      }
+      return copied;
+    } finally {
+      state.archiving = false;
+      await refreshArchiveStatus();
+    }
+  }
+
   function looksLikeExportHref(href) {
-    return /^blob:/i.test(href)
-      || /^data:/i.test(href)
-      || /\.(xls|xlsx)(?:[?#]|$)/i.test(href)
-      || /download|export|excel|xls|xlsx/i.test(href);
+    return /^(blob:|data:)/i.test(href) || /\.(xls|xlsx)(?:[?#]|$)|download|export|excel/i.test(href);
   }
 
-  function applyDownloadNameToAnchor(anchor, filename) {
-    if (!anchor || !filename || !anchor.href || !looksLikeExportHref(anchor.href)) return;
-
-    anchor.setAttribute('download', filename);
-  }
-
-  function applyDownloadNameToExistingAnchors(filename) {
-    if (!filename) return;
-
-    document.querySelectorAll('a[href]').forEach((anchor) => {
-      applyDownloadNameToAnchor(anchor, filename);
+  function fetchExportBlob(url, context) {
+    const parsed = new URL(url, location.href);
+    if (!['https:', 'http:', 'blob:', 'data:'].includes(parsed.protocol)) {
+      return Promise.reject(new Error('不支持的下载地址'));
+    }
+    if (['blob:', 'data:'].includes(parsed.protocol) || parsed.origin === location.origin) {
+      // 立即读取 Blob，避免页面在 click() 返回后 revokeObjectURL。
+      return pageWindow.fetch(parsed.href, { credentials: 'include', signal: context.controller.signal })
+        .then((response) => {
+          if (!response.ok) throw new Error(`下载请求失败：HTTP ${response.status}`);
+          return response.blob();
+        });
+    }
+    return new Promise((resolve, reject) => {
+      const request = GM_xmlhttpRequest({
+        method: 'GET', url: parsed.href, responseType: 'blob', timeout: 60000,
+        onload: (response) => response.status >= 200 && response.status < 300
+          ? resolve(response.response) : reject(new Error(`下载请求失败：HTTP ${response.status}`)),
+        onerror: () => reject(new Error('跨域下载失败，请检查篡改猴连接授权')),
+        ontimeout: () => reject(new Error('获取表格超时')),
+        onabort: () => reject(new Error('下载已取消')),
+      });
+      context.controller.signal.addEventListener('abort', () => request.abort(), { once: true });
+      if (context.controller.signal.aborted) request.abort();
     });
   }
 
-  function setActiveDownloadFileName(shopName) {
-    const filename = buildDownloadFileName(shopName);
+  async function spreadsheetExtension(blob) {
+    if (!blob?.size) throw new Error('下载结果为空，未计为成功');
+    const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+    if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 3 && head[3] === 4) return 'xlsx';
+    if (head[0] === 0xd0 && head[1] === 0xcf && head[2] === 0x11 && head[3] === 0xe0) return 'xls';
+    const text = await blob.slice(0, 65536).text();
+    // 生意参谋也可能导出 HTML 表格或 SpreadsheetML 格式的 .xls。
+    if (/<table[\s>]|<(?:(?:\w+):)?Workbook[\s>]/i.test(text)) return 'xls';
+    throw new Error('响应不是可识别的 Excel 表格，可能是登录页或接口错误；未计为成功');
+  }
 
-    state.currentDownloadFileName = filename;
-    applyDownloadNameToExistingAnchors(filename);
-
-    document.dispatchEvent(
-      new CustomEvent(DOWNLOAD_RENAME_EVENT, {
-        detail: {
-          filename,
-          expiresAt: Date.now() + 30000,
-        },
-      })
-    );
-
-    return filename;
+  async function saveLocalDownload(record, signal) {
+    if (record.localSaved) return record;
+    if (signal.aborted) throw new Error('下载已取消');
+    const url = URL.createObjectURL(record.blob);
+    try {
+      await new Promise((resolve, reject) => {
+        let request;
+        const onAbort = () => { request?.abort(); finish(new Error('下载已取消')); };
+        const timer = window.setTimeout(() => {
+          request?.abort();
+          finish(new Error('本地下载超时，请检查浏览器下载权限'));
+        }, 90000);
+        function finish(error) {
+          window.clearTimeout(timer);
+          signal.removeEventListener('abort', onAbort);
+          error ? reject(error) : resolve();
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        try {
+          request = GM_download({
+            url, name: record.filename, saveAs: false, conflictAction: 'uniquify',
+            onload: () => finish(),
+            onerror: (error) => finish(new Error(`本地下载失败：${error.error || '未知错误'}；请允许篡改猴下载 xls/xlsx 文件`)),
+            ontimeout: () => finish(new Error('本地下载超时')),
+          });
+        } catch (error) { finish(error); }
+      });
+      record.localSaved = true;
+      if (record.archived) record.blob = null;
+      await archiveDB('files', 'readwrite', (store) => store.put(record));
+      return record;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   function installPageDownloadRenameHook() {
-    if (document.documentElement.dataset.sycmDownloadRenameHook === '1') return;
-
-    document.documentElement.dataset.sycmDownloadRenameHook = '1';
-
-    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-
-    if (pageWindow.__SYCM_DOWNLOAD_RENAME_HOOK__) return;
-
-    pageWindow.__SYCM_DOWNLOAD_RENAME_HOOK__ = true;
-
-    let activeFileName = '';
-    let expiresAt = 0;
-
-    const active = () => activeFileName && Date.now() < expiresAt;
-
-    const applyAnchor = (anchor) => {
-      if (!active()) return;
-      applyDownloadNameToAnchor(anchor, activeFileName);
+    if (pageWindow.__SYCM_DOWNLOAD_ARCHIVE_HOOK__) return;
+    pageWindow.__SYCM_DOWNLOAD_ARCHIVE_HOOK__ = true;
+    const blobs = new Map();
+    const rawCreateURL = pageWindow.URL.createObjectURL;
+    pageWindow.URL.createObjectURL = function (blob) {
+      const url = rawCreateURL.apply(this, arguments);
+      if (state.activeDownload && blob && typeof blob.arrayBuffer === 'function') blobs.set(url, blob);
+      return url;
     };
-
-    document.addEventListener(DOWNLOAD_RENAME_EVENT, (event) => {
-      const detail = event.detail || {};
-
-      activeFileName = String(detail.filename || '');
-      expiresAt = Number(detail.expiresAt || 0);
-
-      applyDownloadNameToExistingAnchors(activeFileName);
-    });
-
-    document.addEventListener(
-      'click',
-      (event) => {
-        const anchor =
-          event.target &&
-          event.target.closest &&
-          event.target.closest('a[href]');
-
-        applyAnchor(anchor);
-      },
-      true
-    );
-
-    const rawAnchorClick = pageWindow.HTMLAnchorElement.prototype.click;
-
-    pageWindow.HTMLAnchorElement.prototype.click = function patchedAnchorClick() {
-      applyAnchor(this);
-      return rawAnchorClick.apply(this, arguments);
+    const capture = (url, filename = '') => {
+      const context = state.activeDownload;
+      if (!context || typeof url !== 'string' || !url ||
+          (!looksLikeExportHref(url) && !/\.xlsx?$/i.test(filename))) return false;
+      // 同一次导出的 click 和 window.open 只处理一次；不拦截普通页面链接。
+      if (context.captured) return true;
+      context.captured = true;
+      const source = blobs.has(url) ? Promise.resolve(blobs.get(url)) : fetchExportBlob(url, context);
+      blobs.clear();
+      (async () => {
+        const blob = await source;
+        const extension = await spreadsheetExtension(blob);
+        if (context.controller.signal.aborted) throw new Error('下载已取消');
+        const record = {
+          id: context.id, shopName: context.shopName, date: context.date,
+          filename: buildDownloadFileName(context.shopName, context.date, extension),
+          blob, localSaved: false, archived: false,
+        };
+        await archiveDB('files', 'readwrite', (store) => store.put(record));
+        return saveLocalDownload(record, context.controller.signal);
+      })().then(context.resolve, context.reject);
+      return true;
     };
-
-    const rawOpen = pageWindow.open;
-
-    pageWindow.open = function patchedOpen(url, target, features) {
-      if (active() && typeof url === 'string' && looksLikeExportHref(url)) {
-        const anchor = document.createElement('a');
-
-        anchor.href = url;
-        anchor.download = activeFileName;
-        anchor.style.display = 'none';
-
-        document.documentElement.appendChild(anchor);
-        rawAnchorClick.call(anchor);
-
-        setTimeout(() => anchor.remove(), 1000);
-
-        return null;
+    const rawClick = pageWindow.HTMLAnchorElement.prototype.click;
+    pageWindow.HTMLAnchorElement.prototype.click = function () {
+      if (!capture(this.href, this.download)) return rawClick.apply(this, arguments);
+    };
+    document.addEventListener('click', (event) => {
+      const anchor = event.target?.closest?.('a[href]');
+      if (anchor && capture(anchor.href, anchor.download)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
       }
-
+    }, true);
+    const rawOpen = pageWindow.open;
+    pageWindow.open = function (url) {
+      if (capture(url)) return null;
       return rawOpen.apply(this, arguments);
     };
-
-    new MutationObserver((mutations) => {
-      if (!active()) return;
-
-      for (const mutation of mutations) {
-        if (
-          mutation.type === 'attributes' &&
-          mutation.target &&
-          mutation.target.matches &&
-          mutation.target.matches('a[href]')
-        ) {
-          applyAnchor(mutation.target);
+    // 导出库可能直接调用 FileSaver 的全局 saveAs。
+    if (typeof pageWindow.saveAs === 'function') {
+      const rawSaveAs = pageWindow.saveAs;
+      pageWindow.saveAs = function (blob, filename) {
+        if (state.activeDownload && blob && typeof blob.arrayBuffer === 'function') {
+          const url = pageWindow.URL.createObjectURL(blob);
+          if (capture(url, filename)) { pageWindow.URL.revokeObjectURL(url); return; }
+          pageWindow.URL.revokeObjectURL(url);
         }
-
-        for (const node of mutation.addedNodes || []) {
-          if (!node || node.nodeType !== 1) continue;
-
-          if (node.matches && node.matches('a[href]')) {
-            applyAnchor(node);
-          }
-
-          if (node.querySelectorAll) {
-            node.querySelectorAll('a[href]').forEach(applyAnchor);
-          }
-        }
-      }
-    }).observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['href'],
-    });
-
-    log('下载文件名 Hook 已启用');
+        return rawSaveAs.apply(this, arguments);
+      };
+    }
+    log('表格下载捕获、实际完成确认及持久化缓存已启用');
   }
+
 
   function dispatchMouseLikeEvent(target, type, point, buttons) {
     if (!target) return;
@@ -872,9 +1050,11 @@
     input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  function getCurrentShopName() {
-    for (const shopName of SHOP_NAMES) {
+  function getCurrentShopName(expectedName) {
+    const names = [...new Set([expectedName, ...SHOP_NAMES].filter(Boolean))];
+    for (const shopName of names) {
       const match = textCandidates(shopName, { exact: true }).find((el) => {
+        if (el.closest('.oui-typeahead-dropdown, [class*="typeahead-dropdown"]')) return false;
         const rect = getRect(el);
 
         return rect &&
@@ -1124,7 +1304,7 @@
 
     await sleep(300);
 
-    const currentShopName = getCurrentShopName();
+    const currentShopName = getCurrentShopName(shopName);
 
     if (currentShopName === shopName) {
       updateStatus(`当前已是店铺：${shopName}`);
@@ -1157,10 +1337,10 @@
     state.lastShopName = shopName;
 
     await waitFor(
-      () => getCurrentShopName() === shopName,
+      () => getCurrentShopName(shopName) === shopName,
       `店铺切换到：${shopName}`,
-      6000
-    ).catch(() => null);
+      12000
+    );
 
     await sleep(CONFIG.waitAfterSelectShopMs);
   }
@@ -1386,49 +1566,60 @@
     })[0] || null;
   }
 
-  function hintDownloadName(downloadEl, shopName) {
-    const filename = setActiveDownloadFileName(shopName);
-
-    const anchor =
-      downloadEl.closest?.('a[href]') ||
-      downloadEl.querySelector?.('a[href]');
-
-    if (anchor) {
-      applyDownloadNameToAnchor(anchor, filename);
-    }
-
-    return filename;
-  }
-
   async function triggerDownload(shopName) {
-    const filename = setActiveDownloadFileName(shopName);
-
-    updateStatus('查找右下角下载按钮');
-
-    let downloadButton = findDownloadButton();
-
-    if (!downloadButton) {
-      updateStatus('滚动到页面底部查找下载按钮');
-
-      scrollAllContainersToBottom();
-
-      await sleep(CONFIG.waitAfterScrollBottomMs);
-
-      downloadButton = await waitFor(findDownloadButton, '下载按钮');
+    const id = `${state.batchId}|${shopName}`;
+    const cached = await archiveDB('files', 'readonly', (store) => store.get(id));
+    if (cached?.localSaved) {
+      updateStatus(`已确认本次表格保存完成，跳过重复下载：${cached.filename}`);
+      return;
     }
-
-    hintDownloadName(downloadButton, shopName);
-
-    updateStatus(`触发下载：${filename}`);
-
-    await clickElement(downloadButton, '下载按钮');
-
-    await sleep(CONFIG.waitAfterDownloadClickMs);
-
-    updateStatus(`已触发下载，建议文件名：${filename}`);
+    const context = { id, shopName, date: currentDate(), controller: new AbortController(), captured: false };
+    let timer;
+    try {
+      if (cached?.blob) {
+        state.activeDownload = context;
+        context.captured = true;
+        await saveLocalDownload(cached, context.controller.signal);
+        return;
+      }
+      updateStatus('查找右下角下载按钮');
+      let downloadButton = findDownloadButton();
+      if (!downloadButton) {
+        scrollAllContainersToBottom();
+        await sleep(CONFIG.waitAfterScrollBottomMs);
+        downloadButton = await waitFor(findDownloadButton, '下载按钮');
+      }
+      const completion = new Promise((resolve, reject) => {
+        context.resolve = resolve;
+        context.reject = reject;
+        context.controller.signal.addEventListener('abort', () => reject(new Error('下载已取消')), { once: true });
+        timer = window.setTimeout(() => {
+          reject(new Error('未确认表格下载完成；请检查登录状态、导出方式与下载权限'));
+          context.controller.abort();
+        }, 150000);
+      });
+      // 按钮点击有短暂异步等待，立即挂拒绝处理，防止中途停止造成未处理拒绝。
+      completion.catch(() => {});
+      state.activeDownload = context;
+      updateStatus(`下载并核验：${buildDownloadFileName(shopName, context.date)}`);
+      await clickElement(downloadButton, '下载按钮');
+      const record = await completion;
+      updateStatus(`本地下载完成，待统一归档：${record.filename}`);
+      await refreshArchiveStatus();
+    } finally {
+      window.clearTimeout(timer);
+      context.controller.abort();
+      state.activeDownload = null;
+    }
   }
+
 
   async function downloadShopOnce(shopName, index, total) {
+    const saved = await archiveDB('files', 'readonly', (store) => store.get(`${state.batchId}|${shopName}`));
+    if (saved?.localSaved) {
+      updateStatus(`恢复已完成下载：${saved.filename}`);
+      return;
+    }
     writeBatchState({
       index: index - 1,
       currentShopName: shopName,
@@ -1474,11 +1665,11 @@
     writeBatchState({
       index: index - 1,
       currentShopName: shopName,
-      phase: 'downloadTriggered',
+      phase: 'downloadSaved',
     });
 
     await randomStableWait(
-      `[${index}/${total}] 下载已触发：${shopName}`,
+      `[${index}/${total}] 表格已保存：${shopName}`,
       CONFIG.randomWaitMinMs,
       CONFIG.randomWaitMaxMs
     );
@@ -1528,12 +1719,16 @@
     return false;
   }
 
-  async function runShopList(shops, startIndex = 0, isResume = false, singleMode = false) {
+  async function runShopList(shops, startIndex = 0, isResume = false) {
     if (state.running) {
       updateStatus('当前已有任务正在运行', true);
       return;
     }
 
+    if (state.archiving) {
+      updateStatus('正在拷贝，请稍后开始下载', true);
+      return;
+    }
     state.running = true;
     state.stopRequested = false;
 
@@ -1544,7 +1739,12 @@
     let failed = 0;
     let failures = [];
 
-    if (!singleMode) {
+    try {
+      if (!await hasArchivePermission()) {
+        updateStatus('请先选择归档目录，或点击“补拷贝 / 授权续跑”恢复目录权限', true);
+        return;
+      }
+      // 单店和批量共用持久化任务，店铺切换导致刷新时都能继续。
       if (!isResume) {
         startBatchState(shops, startIndex);
       } else {
@@ -1559,12 +1759,10 @@
           stopRequested: false,
         });
       }
-    }
-
-    try {
+      state.batchId = readBatchState().batchId;
       updateStatus(
         isResume
-          ? `继续任务，从第 ${startIndex + 1}/${shops.length} 家开始`
+          ? (startIndex >= shops.length ? '继续归档表格' : `继续任务，从第 ${startIndex + 1}/${shops.length} 家开始`)
           : `开始任务，共 ${shops.length} 家店铺`
       );
 
@@ -1573,15 +1771,10 @@
 
         const shopName = shops[i];
 
-        if (!singleMode) {
-          writeBatchState({
-            active: true,
-            shops,
-            index: i,
-            currentShopName: shopName,
-            phase: 'running',
-          });
-        }
+        writeBatchState({
+          active: true, shops, index: i,
+          currentShopName: shopName, phase: 'running',
+        });
 
         const ok = await downloadShopWithRetry(
           shopName,
@@ -1596,17 +1789,10 @@
           failures.push(`${shopName}: 失败`);
         }
 
-        if (!singleMode) {
-          writeBatchState({
-            active: true,
-            shops,
-            index: i + 1,
-            completed,
-            failures,
-            currentShopName: '',
-            phase: 'waitingNext',
-          });
-        }
+        writeBatchState({
+          active: !state.stopRequested, shops, index: i + 1,
+          completed, failures, currentShopName: '', phase: 'waitingNext',
+        });
 
         if (!state.stopRequested && i < shops.length - 1) {
           await randomStableWait('切换下一家店铺前', 2500, 6000);
@@ -1614,19 +1800,14 @@
       }
 
       if (state.stopRequested) {
-        if (!singleMode) {
-          stopBatchState();
-        }
+        stopBatchState();
 
         updateStatus(`已停止，已完成 ${completed}/${shops.length}`);
       } else {
-        if (!singleMode) {
-          clearBatchState();
-        }
-
-        updateStatus(
-          `全部处理完成：成功 ${completed} 家，失败 ${failed} 家`
-        );
+        writeBatchState({ phase: 'archiving', active: true });
+        const copied = await copyPendingFiles();
+        clearBatchState();
+        updateStatus(`处理完成：下载 ${completed} 家，失败 ${failed} 家；本次归档 ${copied} 份`);
 
         showCompletionPopup({
           completed,
@@ -1634,6 +1815,8 @@
           failed,
         });
       }
+    } catch (error) {
+      updateStatus(`任务暂停：${error.message}。已取得表格保留在缓存，点击“补拷贝 / 授权续跑”重试。`, true);
     } finally {
       state.running = false;
       setPanelRunning(false);
@@ -1655,16 +1838,16 @@
 
     index = Math.max(0, Math.min(index, shops.length));
 
-    if (index >= shops.length) {
-      clearBatchState();
+    // 最后一家下载后刷新也必须继续归档，不能直接清除任务。
+    if (!batch.batchId) {
+      writeBatchState({ active: false });
+      updateStatus('检测到旧版任务，请重新点击下载；新版将核验下载并归档', true);
       return;
     }
 
-    const currentShopName = shops[index];
-
-    updateStatus(
-      `检测到未完成任务，${Math.round(CONFIG.autoResumeDelayMs / 1000)} 秒后从第 ${index + 1}/${shops.length} 家继续：${currentShopName}`
-    );
+    updateStatus(index >= shops.length
+      ? '检测到待归档任务，即将继续拷贝表格'
+      : `检测到未完成任务，${Math.round(CONFIG.autoResumeDelayMs / 1000)} 秒后从第 ${index + 1}/${shops.length} 家继续：${shops[index]}`);
 
     window.setTimeout(() => {
       const latest = readBatchState();
@@ -1683,20 +1866,26 @@
 
       latestIndex = Math.max(0, Math.min(latestIndex, latestShops.length));
 
-      runShopList(latestShops, latestIndex, true, false);
+      runShopList(latestShops, latestIndex, true);
     }, CONFIG.autoResumeDelayMs);
   }
 
-  function init() {
+  async function init() {
     installPageDownloadRenameHook();
     createPanel();
 
-    log('脚本已加载');
-    log('本版已加入批量状态保存，页面刷新后会继续下一家');
-    log('30天和下载按钮逻辑沿用你参考的正常版本');
-
-    resumePendingBatch();
+    log(`脚本 v${VERSION} 已加载；GitHub 原路径支持篡改猴更新`);
+    log('表格以店铺名称+北京时间日期命名；下载后统一拷贝到日期文件夹');
+    log(`归档目标：${ARCHIVE_ROOT}（首次需手动选择此目录）`);
+    try {
+      state.archiveHandle = await archiveDB('settings', 'readonly', (store) => store.get('directory'));
+      await refreshArchiveStatus();
+      resumePendingBatch();
+    } catch (error) {
+      updateStatus(`无法读取归档缓存：${error.message}`, true);
+    }
   }
 
   init();
 })();
+
